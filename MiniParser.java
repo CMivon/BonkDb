@@ -1,4 +1,3 @@
-
 import java.util.*;
 import java.util.regex.*;
 
@@ -14,11 +13,11 @@ public class MiniParser {
     // ---------- Stage 1: Lexer ----------
 
     enum TokenType {
-        SELECT, FROM, WHERE, AND, OR, NOT,
-        IDENT, NUMBER, STRING, OP, COMMA, LPAREN, RPAREN, EOF
+        SELECT, FROM, WHERE, AND, OR, NOT, JOIN, ON,
+        IDENT, NUMBER, STRING, OP, COMMA, DOT, LPAREN, RPAREN, EOF
     }
 
-    static final Set<String> KEYWORDS = Set.of("SELECT", "FROM", "WHERE", "AND", "OR", "NOT");
+    static final Set<String> KEYWORDS = Set.of("SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "JOIN", "ON");
 
     static class Token {
         final TokenType type;
@@ -34,6 +33,7 @@ public class MiniParser {
         "|(?<IDENT>[A-Za-z_][A-Za-z0-9_]*)" +
         "|(?<OP><>|<=|>=|=|<|>|\\+|-|\\*|/)" +
         "|(?<COMMA>,)" +
+        "|(?<DOT>\\.)" +
         "|(?<LPAREN>\\()" +
         "|(?<RPAREN>\\))" +
         "|(?<SKIP>[ \\t\\n]+)"
@@ -66,7 +66,7 @@ public class MiniParser {
 
     // Helper: find which named group matched
     static String kindOf(Matcher m) {
-        for (String name : new String[]{"NUMBER", "STRING", "IDENT", "OP", "COMMA", "LPAREN", "RPAREN", "SKIP"}) {
+        for (String name : new String[]{"NUMBER", "STRING", "IDENT", "OP", "COMMA", "DOT", "LPAREN", "RPAREN", "SKIP"}) {
             if (m.group(name) != null) return name;
         }
         throw new RuntimeException("No token type matched");
@@ -77,9 +77,11 @@ public class MiniParser {
     interface Expr {}
 
     static class Column implements Expr {
+        final String table; // nullable -- e.g. "users" in "users.id", null for unqualified "id"
         final String name;
-        Column(String name) { this.name = name; }
-        public String toString() { return "Column(" + name + ")"; }
+        Column(String name) { this(null, name); }
+        Column(String table, String name) { this.table = table; this.name = name; }
+        public String toString() { return "Column(" + (table != null ? table + "." : "") + name + ")"; }
     }
 
     static class Star implements Expr {
@@ -99,15 +101,23 @@ public class MiniParser {
         public String toString() { return "BinaryOp(" + op + ", " + left + ", " + right + ")"; }
     }
 
+    static class Join {
+        final String table;
+        final Expr on;
+        Join(String table, Expr on) { this.table = table; this.on = on; }
+        public String toString() { return "Join(table=" + table + ", on=" + on + ")"; }
+    }
+
     static class SelectStmt {
         final List<Expr> columns;
         final String table;
+        final List<Join> joins;
         final Expr where; // nullable
-        SelectStmt(List<Expr> columns, String table, Expr where) {
-            this.columns = columns; this.table = table; this.where = where;
+        SelectStmt(List<Expr> columns, String table, List<Join> joins, Expr where) {
+            this.columns = columns; this.table = table; this.joins = joins; this.where = where;
         }
         public String toString() {
-            return "SelectStmt(columns=" + columns + ", table=" + table + ", where=" + where + ")";
+            return "SelectStmt(columns=" + columns + ", table=" + table + ", joins=" + joins + ", where=" + where + ")";
         }
     }
 
@@ -130,19 +140,29 @@ public class MiniParser {
             return advance();
         }
 
-        // select_stmt := SELECT select_list FROM IDENT [WHERE condition]
+        // select_stmt := SELECT select_list FROM IDENT (JOIN IDENT ON condition)* [WHERE condition]
         SelectStmt parseSelect() {
             expect(TokenType.SELECT);
             List<Expr> columns = parseSelectList();
             expect(TokenType.FROM);
             String table = expect(TokenType.IDENT).value;
+
+            List<Join> joins = new ArrayList<>();
+            while (peek().type == TokenType.JOIN) {
+                advance();
+                String joinTable = expect(TokenType.IDENT).value;
+                expect(TokenType.ON);
+                Expr on = parseOrExpr();
+                joins.add(new Join(joinTable, on));
+            }
+
             Expr where = null;
             if (peek().type == TokenType.WHERE) {
                 advance();
                 where = parseOrExpr();
             }
             expect(TokenType.EOF);
-            return new SelectStmt(columns, table, where);
+            return new SelectStmt(columns, table, joins, where);
         }
 
         List<Expr> parseSelectList() {
@@ -151,12 +171,23 @@ public class MiniParser {
                 return List.of(new Star());
             }
             List<Expr> columns = new ArrayList<>();
-            columns.add(new Column(expect(TokenType.IDENT).value));
+            columns.add(parseQualifiedColumn());
             while (peek().type == TokenType.COMMA) {
                 advance();
-                columns.add(new Column(expect(TokenType.IDENT).value));
+                columns.add(parseQualifiedColumn());
             }
             return columns;
+        }
+
+        // qualified_column := IDENT ('.' IDENT)?
+        Column parseQualifiedColumn() {
+            String first = expect(TokenType.IDENT).value;
+            if (peek().type == TokenType.DOT) {
+                advance();
+                String second = expect(TokenType.IDENT).value;
+                return new Column(first, second); // first is the table qualifier
+            }
+            return new Column(first); // unqualified
         }
 
         // condition := and_expr (OR and_expr)*
@@ -181,22 +212,31 @@ public class MiniParser {
             return left;
         }
 
-        // comparison := IDENT OP (NUMBER | STRING)
+        // comparison := operand OP operand
+        // operand := qualified_column | NUMBER | STRING
         Expr parseComparison() {
-            Expr left = new Column(expect(TokenType.IDENT).value);
+            Expr left = parseOperand();
             Token opTok = expect(TokenType.OP);
-            Token rightTok = advance();
-            Expr right;
-            if (rightTok.type == TokenType.NUMBER) {
-                right = new Literal(Double.parseDouble(rightTok.value));
-            } else if (rightTok.type == TokenType.STRING) {
-                String s = rightTok.value;
-                s = s.substring(1, s.length() - 1).replace("''", "'");
-                right = new Literal(s);
-            } else {
-                throw new RuntimeException("Expected value, got " + rightTok.type);
-            }
+            Expr right = parseOperand();
             return new BinaryOp(opTok.value, left, right);
+        }
+
+        Expr parseOperand() {
+            Token tok = peek();
+            if (tok.type == TokenType.NUMBER) {
+                advance();
+                return new Literal(Double.parseDouble(tok.value));
+            }
+            if (tok.type == TokenType.STRING) {
+                advance();
+                String s = tok.value;
+                s = s.substring(1, s.length() - 1).replace("''", "'");
+                return new Literal(s);
+            }
+            if (tok.type == TokenType.IDENT) {
+                return parseQualifiedColumn();
+            }
+            throw new RuntimeException("Expected column or value, got " + tok.type);
         }
     }
 
@@ -211,6 +251,7 @@ public class MiniParser {
         String[] examples = {
             "SELECT name, age FROM users WHERE age > 18",
             "SELECT * FROM products WHERE price <= 100 AND category = 'tools'",
+            "SELECT users.name, orders.total FROM users JOIN orders ON users.id = orders.user_id WHERE orders.total > 50",
         };
         for (String sql : examples) {
             System.out.println("\nSQL:  " + sql);

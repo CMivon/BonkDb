@@ -149,12 +149,16 @@ public class ExecutionDemo {
         products.insert("Hammer", 25.0, "tools");
         products.insert("Wrench", 150.0, "tools");
         products.insert("Paint", 40.0, "supplies");
+
+        Table orders = new Table("orders", List.of("user_id", "product_id"));
+        orders.insert("Alice", "Hammer");
+        orders.insert("Bob", "Wrench");
  
-        Map<String, Table> catalog = Map.of("users", users, "products", products);
+        Map<String, Table> catalog = Map.of("users", users, "products", products, "orders", orders);
  
         String[] queries = {
-            "SELECT name, age FROM users WHERE age > 18",
-            "SELECT * FROM products WHERE price <= 100 AND category = 'tools'",
+            "SELECT name, age  FROM users join orders on users.name = orders.user_id  WHERE age > 18"
+        //     "SELECT * FROM products WHERE price <= 100 AND category = 'tools'",
         };
  
         for (String sql : queries) {
@@ -167,23 +171,23 @@ public class ExecutionDemo {
         }
  
         // ---------- Persistence demo ----------
-        System.out.println("\n--- Persistence ---");
+        // System.out.println("\n--- Persistence ---");
  
-        String path = "users.tbl";
-        users.save(path);
-        System.out.println("Saved users table to " + path);
+        // String path = "users.tbl";
+        // users.save(path);
+        // System.out.println("Saved users table to " + path);
  
-        // Simulate a fresh process: load the table back from disk into a new object.
-        Table reloadedUsers = Table.load(path);
-        System.out.println("Reloaded table '" + reloadedUsers.name + "' with " + reloadedUsers.rows.size() + " rows");
+        // // Simulate a fresh process: load the table back from disk into a new object.
+        // Table reloadedUsers = Table.load(path);
+        // System.out.println("Reloaded table '" + reloadedUsers.name + "' with " + reloadedUsers.rows.size() + " rows");
  
-        Map<String, Table> reloadedCatalog = Map.of("users", reloadedUsers);
-        String sql = "SELECT name, age FROM users WHERE age > 18";
-        System.out.println("\nSQL (on reloaded table): " + sql);
-        List<Object[]> rows = executeSelect(MiniParser.parseSql(sql), reloadedCatalog);
-        for (Object[] row : rows) {
-            System.out.println("  " + Arrays.toString(row));
-        }
+        // Map<String, Table> reloadedCatalog = Map.of("users", reloadedUsers);
+        // String sql = "SELECT name, age FROM users WHERE age > 18";
+        // System.out.println("\nSQL (on reloaded table): " + sql);
+        // List<Object[]> rows = executeSelect(MiniParser.parseSql(sql), reloadedCatalog);
+        // for (Object[] row : rows) {
+        //     System.out.println("  " + Arrays.toString(row));
+        // }
     }
    
 }
