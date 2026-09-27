@@ -2,7 +2,6 @@
 import java.util.*;
 import java.io.*;
 
-//TODO: want a better representation. Don't want to load/save entire file at once
 /**
  * In-memory table representation with simple text-file persistence.
  * Stands in for a real storage engine (pages, buffer pool, B+ trees) --
@@ -11,12 +10,26 @@ import java.io.*;
 public class Table {
     final String name;
     final List<String> columns;
+    // Declared column types ("DOUBLE"/"STRING"), parallel to columns -- null
+    // when a table was built without an explicit schema (the old behavior:
+    // types get *inferred* from the first row instead, see inferTypes()).
+    // CREATE TABLE always supplies this; ad-hoc Tables built directly in Java
+    // (as in Test.java) generally don't.
+    final List<String> types;
     final List<Object[]> rows = new ArrayList<>();
     final Map<String, Integer> columnIndex = new HashMap<>();
 
     Table(String name, List<String> columns) {
+        this(name, columns, null);
+    }
+
+    Table(String name, List<String> columns, List<String> types) {
+        if (types != null && types.size() != columns.size()) {
+            throw new RuntimeException("Column/type count mismatch for table " + name);
+        }
         this.name = name;
         this.columns = columns;
+        this.types = types;
         for (int i = 0; i < columns.size(); i++) {
             columnIndex.put(columns.get(i), i);
         }
@@ -25,6 +38,20 @@ public class Table {
     void insert(Object... values) {
         if (values.length != columns.size()) {
             throw new RuntimeException("Column count mismatch for table " + name);
+        }
+        // Only tables with a declared schema (from CREATE TABLE) get validated --
+        // ad-hoc Tables built directly in Java have no schema to check against.
+        if (types != null) {
+            for (int i = 0; i < values.length; i++) {
+                boolean ok = types.get(i).equals("DOUBLE")
+                    ? values[i] instanceof Double
+                    : values[i] instanceof String;
+                if (!ok) {
+                    throw new RuntimeException("Column '" + columns.get(i) + "' expects " + types.get(i)
+                        + ", got " + (values[i] == null ? "null" : values[i].getClass().getSimpleName())
+                        + " (" + values[i] + ")");
+                }
+            }
         }
         rows.add(values);
     }
@@ -100,7 +127,7 @@ public class Table {
 
             r.readLine(); // "ROWS" marker, discard
 
-            Table table = new Table(tableName, new ArrayList<>(cols));
+            Table table = new Table(tableName, new ArrayList<>(cols), new ArrayList<>(types));
             String line;
             while ((line = r.readLine()) != null) {
                 if (line.isEmpty()) continue;
@@ -116,16 +143,24 @@ public class Table {
         }
     }
 
+	//TODO: I don't really like infering Types. Maybe throw an error wherever this is needed instead?
     private List<String> inferTypes() {
-        List<String> types = new ArrayList<>();
+        if (types != null) {
+            return types; // declared schema (from CREATE TABLE) always wins
+        }
+        // No declared schema (an ad-hoc Table): fall back to guessing from
+        // the first row, as before. Note this guesses "STRING" for a table
+        // that's still empty -- another reason CREATE TABLE tables carry
+        // their real types explicitly instead of relying on this.
+        List<String> inferred = new ArrayList<>();
         for (int i = 0; i < columns.size(); i++) {
             if (!rows.isEmpty() && rows.get(0)[i] instanceof Double) {
-                types.add("DOUBLE");
+                inferred.add("DOUBLE");
             } else {
-                types.add("STRING");
+                inferred.add("STRING");
             }
         }
-        return types;
+        return inferred;
     }
 
     // Minimal escaping so commas/newlines inside string values don't break parsing.

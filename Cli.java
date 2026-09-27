@@ -5,9 +5,9 @@ import java.util.*;
 /**
  * Basic interactive command-line REPL for the engine.
  *
- * Type a SELECT statement ending in ';' and press Enter (multi-line
- * statements are fine -- it keeps reading until it sees the ';'). Meta
- * commands (not SQL) start with '.':
+ * Type a SELECT or CREATE TABLE statement ending in ';' and press Enter
+ * (multi-line statements are fine -- it keeps reading until it sees the
+ * ';'). Meta commands (not SQL) start with '.':
  *
  *   .tables            list loaded tables and their columns
  *   .load <name> <path> load a table from a saved .tbl file (see Table.save)
@@ -15,9 +15,10 @@ import java.util.*;
  *   .help               show this message
  *   .exit / .quit       quit
  *
- * There's no INSERT/CREATE TABLE yet, so this starts with the same sample
- * data as Test.java (users, products, orders) so there's something to
- * query right away.
+ * There's still no INSERT, so a CREATE TABLE'd table stays empty for the
+ * rest of the session -- but it starts with the same sample data as
+ * Test.java (users, products, orders) so there's something to query
+ * right away regardless.
  */
 public class Cli {
 
@@ -71,9 +72,17 @@ public class Cli {
 
     static void runStatement(String sql) {
         try {
-            MiniParser.SelectStmt stmt = MiniParser.parseSql(sql);
-            ExecutionDemo.QueryResult result = ExecutionDemo.executeSelect(stmt, catalog);
-            printTable(result);
+            MiniParser.Stmt stmt = MiniParser.parseSql(sql);
+            if (stmt instanceof MiniParser.SelectStmt) {
+                ExecutionDemo.QueryResult result = ExecutionDemo.executeSelect((MiniParser.SelectStmt) stmt, catalog);
+                printTable(result);
+            } else if (stmt instanceof MiniParser.CreateTableStmt) {
+                MiniParser.CreateTableStmt createStmt = (MiniParser.CreateTableStmt) stmt;
+                ExecutionDemo.executeCreateTable(createStmt, catalog);
+                System.out.println("Table '" + createStmt.table + "' created.");
+            } else {
+                System.out.println("Error: don't know how to run statement: " + stmt);
+            }
         } catch (RuntimeException e) {
             System.out.println("Error: " + e.getMessage());
         }

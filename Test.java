@@ -20,6 +20,7 @@ public class Test {
         testGroupByAndAggregates();
         testJoin();
         testPersistence();
+        testCreateTable();
     }
 
     // ---------- Shared sample data ----------
@@ -62,7 +63,7 @@ public class Test {
 
     static void run(String sql, Map<String, Table> catalog) {
         System.out.println("\nSQL: " + sql);
-        MiniParser.SelectStmt ast = MiniParser.parseSql(sql);
+        MiniParser.SelectStmt ast = (MiniParser.SelectStmt) MiniParser.parseSql(sql);
         ExecutionDemo.QueryResult result = ExecutionDemo.executeSelect(ast, catalog);
         System.out.println("  " + result.columns);
         for (Object[] row : result.rows) {
@@ -103,6 +104,43 @@ public class Test {
 
         run("SELECT users.name, orders.total FROM users JOIN orders ON users.id = orders.user_id "
                 + "WHERE orders.total > 50", catalog);
+    }
+
+    static void testCreateTable() {
+        System.out.println("\n--- CREATE TABLE ---");
+        Map<String, Table> catalog = new HashMap<>();
+
+        String createSql = "CREATE TABLE employees (id INT, name TEXT, salary DOUBLE)";
+        System.out.println("\nSQL: " + createSql);
+        MiniParser.CreateTableStmt createStmt = (MiniParser.CreateTableStmt) MiniParser.parseSql(createSql);
+        ExecutionDemo.executeCreateTable(createStmt, catalog);
+        Table employees = catalog.get("employees");
+        System.out.println("  Created '" + employees.name + "' with columns " + employees.columns
+                + " and types " + employees.types);
+
+        // A fresh CREATE TABLE is genuinely empty -- SELECT * should return
+        // 0 rows, not throw, and the header should reflect the declared columns.
+        run("SELECT * FROM employees", catalog);
+
+        // Insert should validate values against the declared schema.
+        employees.insert(1.0, "Dana", 90000.0);
+        System.out.println("  Inserted a valid row OK");
+        try {
+            employees.insert("not-a-number", "Eve", 80000.0);
+            System.out.println("  ERROR: expected insert to reject a bad type, but it didn't");
+        } catch (RuntimeException e) {
+            System.out.println("  Got expected validation error: " + e.getMessage());
+        }
+
+        run("SELECT * FROM employees", catalog);
+
+        // Creating the same table twice should fail.
+        try {
+            ExecutionDemo.executeCreateTable(createStmt, catalog);
+            System.out.println("  ERROR: expected duplicate CREATE TABLE to fail, but it didn't");
+        } catch (RuntimeException e) {
+            System.out.println("  Got expected duplicate-table error: " + e.getMessage());
+        }
     }
 
     static void testPersistence() throws java.io.IOException {
