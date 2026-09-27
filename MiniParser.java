@@ -14,11 +14,14 @@ public class MiniParser {
     // ---------- Stage 1: Lexer ----------
 
     enum TokenType {
-        SELECT, FROM, WHERE, AND, OR, NOT, JOIN, ON, LIMIT,
+        SELECT, FROM, WHERE, AND, OR, NOT, JOIN, ON, LIMIT, ORDER, BY, ASC, DESC,
         IDENT, NUMBER, STRING, OP, COMMA, DOT, LPAREN, RPAREN, EOF
     }
 
-    static final Set<String> KEYWORDS = Set.of("SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "JOIN", "ON", "LIMIT");
+    static final Set<String> KEYWORDS = Set.of(
+        "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "JOIN", "ON", "LIMIT",
+        "ORDER", "BY", "ASC", "DESC"
+    );
 
     static class Token {
         final TokenType type;
@@ -109,18 +112,28 @@ public class MiniParser {
         public String toString() { return "Join(table=" + table + ", on=" + on + ")"; }
     }
 
+    static class OrderByItem {
+        final Column column;
+        final boolean descending;
+        OrderByItem(Column column, boolean descending) { this.column = column; this.descending = descending; }
+        public String toString() { return column + (descending ? " DESC" : " ASC"); }
+    }
+
     static class SelectStmt {
         final List<Expr> columns;
         final String table;
         final List<Join> joins;
         final Expr where; // nullable
+        final List<OrderByItem> orderBy; // empty if no ORDER BY
         final Integer limit; // nullable
-        SelectStmt(List<Expr> columns, String table, List<Join> joins, Expr where, Integer limit) {
-            this.columns = columns; this.table = table; this.joins = joins; this.where = where; this.limit = limit;
+        SelectStmt(List<Expr> columns, String table, List<Join> joins, Expr where,
+                   List<OrderByItem> orderBy, Integer limit) {
+            this.columns = columns; this.table = table; this.joins = joins; this.where = where;
+            this.orderBy = orderBy; this.limit = limit;
         }
         public String toString() {
             return "SelectStmt(columns=" + columns + ", table=" + table + ", joins=" + joins
-                    + ", where=" + where + ", limit=" + limit + ")";
+                    + ", where=" + where + ", orderBy=" + orderBy + ", limit=" + limit + ")";
         }
     }
 
@@ -166,6 +179,17 @@ public class MiniParser {
                 where = parseOrExpr();
             }
 
+            List<OrderByItem> orderBy = new ArrayList<>();
+            if (peek().type == TokenType.ORDER) {
+                advance();
+                expect(TokenType.BY);
+                orderBy.add(parseOrderByItem());
+                while (peek().type == TokenType.COMMA) {
+                    advance();
+                    orderBy.add(parseOrderByItem());
+                }
+            }
+
             Integer limit = null;
             if (peek().type == TokenType.LIMIT) {
                 advance();
@@ -177,7 +201,20 @@ public class MiniParser {
             }
 
             expect(TokenType.EOF);
-            return new SelectStmt(columns, table, joins, where, limit);
+            return new SelectStmt(columns, table, joins, where, orderBy, limit);
+        }
+
+        // order_by_item := qualified_column [ASC | DESC]
+        OrderByItem parseOrderByItem() {
+            Column col = parseQualifiedColumn();
+            boolean descending = false;
+            if (peek().type == TokenType.ASC) {
+                advance();
+            } else if (peek().type == TokenType.DESC) {
+                advance();
+                descending = true;
+            }
+            return new OrderByItem(col, descending);
         }
 
         List<Expr> parseSelectList() {
@@ -268,6 +305,7 @@ public class MiniParser {
             "SELECT * FROM products WHERE price <= 100 AND category = 'tools'",
             "SELECT users.name, orders.total FROM users JOIN orders ON users.id = orders.user_id WHERE orders.total > 50",
             "SELECT * FROM products LIMIT 2",
+            "SELECT * FROM products ORDER BY price DESC LIMIT 2",
         };
         for (String sql : examples) {
             System.out.println("\nSQL:  " + sql);

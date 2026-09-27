@@ -132,21 +132,61 @@ public class ExecutionDemo {
             }
         }
 
-        // 3. Scan + filter + project + limit
-        List<Object[]> result = new ArrayList<>();
+        // 3. Scan + filter (keep full rows -- ORDER BY may reference columns
+        //    that aren't in the SELECT list, so we can't project yet)
+        List<Object[]> filtered = new ArrayList<>();
         for (Object[] row : table.rows) {
-            if (stmt.limit != null && result.size() >= stmt.limit) {
-                break; // no point scanning further once we have enough rows
-            }
             if (stmt.where == null || asBool(evaluate(stmt.where, table, row))) {
-                Object[] projected = new Object[outputColumns.size()];
-                for (int i = 0; i < outputColumns.size(); i++) {
-                    projected[i] = row[table.indexOfColumn(outputColumns.get(i))];
-                }
-                result.add(projected);
+                filtered.add(row);
             }
         }
+
+        // 4. Sort, if requested. Note: this means LIMIT can no longer short-
+        // circuit the scan the way it used to -- we need every matching row
+        // in hand before we know which ones sort to the top. (Real engines
+        // avoid a full sort here with a top-k/heap strategy when the limit
+        // is much smaller than the row count -- worth revisiting later.)
+        if (!stmt.orderBy.isEmpty()) {
+            final Table sortTable = table; // lambdas need an effectively-final capture
+            Comparator<Object[]> comparator = (a, b) -> {
+                for (MiniParser.OrderByItem item : stmt.orderBy) {
+                    int idx = sortTable.indexOfColumn(item.column);
+                    int cmp = compareValues(a[idx], b[idx]);
+                    if (item.descending) cmp = -cmp;
+                    if (cmp != 0) return cmp;
+                }
+                return 0;
+            };
+            filtered.sort(comparator);
+        }
+
+        // 5. Apply LIMIT
+        if (stmt.limit != null && filtered.size() > stmt.limit) {
+            filtered = filtered.subList(0, stmt.limit);
+        }
+
+        // 6. Project
+        List<Object[]> result = new ArrayList<>();
+        for (Object[] row : filtered) {
+            Object[] projected = new Object[outputColumns.size()];
+            for (int i = 0; i < outputColumns.size(); i++) {
+                projected[i] = row[table.indexOfColumn(outputColumns.get(i))];
+            }
+            result.add(projected);
+        }
         return result;
+    }
+
+    // Ordering comparator for sorting (distinct from compare(), which
+    // evaluates a specific operator like "=" or ">" for WHERE/ON clauses).
+    static int compareValues(Object left, Object right) {
+        if (left instanceof Double && right instanceof Double) {
+            return Double.compare((Double) left, (Double) right);
+        }
+        if (left instanceof String && right instanceof String) {
+            return ((String) left).compareTo((String) right);
+        }
+        throw new RuntimeException("Cannot compare " + left + " and " + right);
     }
 
     // ---------- Demo ----------
@@ -174,12 +214,12 @@ public class ExecutionDemo {
         orders.insert(101.0, 1.0, 20.0);
         orders.insert(102.0, 3.0, 60.0);
 
-        Map<String, Table> catalog = Map.of("users", usersWithId, "products", products, "orders", orders);
+        Map<String, Table> catalog = Map.of("users", users, "products", products, "orders", orders);
         Map<String, Table> joinCatalog = Map.of("users", usersWithId, "orders", orders);
 
         // String[] queries = {
-        //     "SELECT name, age, id FROM users WHERE age > 18"
-        // //     "SELECT * FROM products WHERE price <= 100 AND category = 'tools'",
+        //     "SELECT name, age FROM users WHERE age > 18",
+        //     "SELECT * FROM products WHERE price <= 100 AND category = 'tools'",
         // };
 
         // for (String sql : queries) {
@@ -196,6 +236,14 @@ public class ExecutionDemo {
         System.out.println("\nSQL: " + limitSql);
         List<Object[]> limitRows = executeSelect(MiniParser.parseSql(limitSql), catalog);
         for (Object[] row : limitRows) {
+            System.out.println("  " + Arrays.toString(row));
+        }
+
+        // ---------- ORDER BY demo ----------
+        String orderSql = "SELECT * FROM products ORDER BY price DESC LIMIT 2";
+        System.out.println("\nSQL: " + orderSql);
+        List<Object[]> orderRows = executeSelect(MiniParser.parseSql(orderSql), catalog);
+        for (Object[] row : orderRows) {
             System.out.println("  " + Arrays.toString(row));
         }
 
