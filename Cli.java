@@ -11,7 +11,7 @@ import java.util.*;
  *
  *   .tables            list loaded tables and their columns
  *   .load <name> <path> load a table from a saved .tbl file (see Table.save)
- *   .save <name> <path> save a loaded table to a .tbl file
+ *   .save <name> [path] save a table to a .tbl file (defaults to <name>.tbl)
  *   .help               show this message
  *   .exit / .quit       quit
  *
@@ -139,7 +139,7 @@ public class Cli {
                 System.out.println(
                     ".tables              list loaded tables and their columns\n" +
                     ".load <name> <path>  load a table from a saved .tbl file\n" +
-                    ".save <name> <path>  save a loaded table to a .tbl file\n" +
+                    ".save <name> [path]  save a table to a .tbl file (defaults to <name>.tbl)\n" +
                     ".help                show this message\n" +
                     ".exit / .quit        quit"
                 );
@@ -167,8 +167,8 @@ public class Cli {
                 }
                 break;
             case ".save":
-                if (parts.length != 3) {
-                    System.out.println("Usage: .save <name> <path>");
+                if (parts.length != 2 && parts.length != 3) {
+                    System.out.println("Usage: .save <name> [path]  (path defaults to <name>.tbl)");
                     break;
                 }
                 Table t = catalog.get(parts[1]);
@@ -176,11 +176,12 @@ public class Cli {
                     System.out.println("No such table: " + parts[1]);
                     break;
                 }
+                String savePath = parts.length == 3 ? parts[2] : parts[1] + ".tbl";
                 try {
-                    t.save(parts[2]);
-                    System.out.println("Saved '" + parts[1] + "' to " + parts[2]);
+                    t.save(savePath);
+                    System.out.println("Saved '" + parts[1] + "' to " + savePath);
                 } catch (IOException e) {
-                    System.out.println("Error saving to " + parts[2] + ": " + e.getMessage());
+                    System.out.println("Error saving to " + savePath + ": " + e.getMessage());
                 }
                 break;
             default:
