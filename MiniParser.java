@@ -165,17 +165,18 @@ public class MiniParser {
         final List<Join> joins;
         final Expr where; // nullable
         final List<Column> groupBy; // empty if no GROUP BY
-        final List<OrderByItem> orderBy; // empty if no ORDER BY
+        final List<OrderByItem> orderBy; // empty if no ORDER BY (and always empty when chaos is true)
+        final boolean chaos; // true for "ORDER BY CHAOS" -- shuffle instead of sort
         final Integer limit; // nullable
         SelectStmt(List<Expr> columns, String table, List<Join> joins, Expr where,
-                   List<Column> groupBy, List<OrderByItem> orderBy, Integer limit) {
+                   List<Column> groupBy, List<OrderByItem> orderBy, boolean chaos, Integer limit) {
             this.columns = columns; this.table = table; this.joins = joins; this.where = where;
-            this.groupBy = groupBy; this.orderBy = orderBy; this.limit = limit;
+            this.groupBy = groupBy; this.orderBy = orderBy; this.chaos = chaos; this.limit = limit;
         }
         public String toString() {
             return "SelectStmt(columns=" + columns + ", table=" + table + ", joins=" + joins
                     + ", where=" + where + ", groupBy=" + groupBy + ", orderBy=" + orderBy
-                    + ", limit=" + limit + ")";
+                    + ", chaos=" + chaos + ", limit=" + limit + ")";
         }
     }
 
@@ -251,13 +252,22 @@ public class MiniParser {
             }
 
             List<OrderByItem> orderBy = new ArrayList<>();
+            boolean chaos = false;
             if (peek().type == TokenType.ORDER) {
                 advance();
                 expect(TokenType.BY);
-                orderBy.add(parseOrderByItem());
-                while (peek().type == TokenType.COMMA) {
+                // "CHAOS" isn't a reserved keyword -- it's recognized only in
+                // this position, so a real column named "chaos" still works
+                // everywhere else (WHERE, a normal ORDER BY list, etc).
+                if (peek().type == TokenType.IDENT && peek().value.equalsIgnoreCase("CHAOS")) {
                     advance();
+                    chaos = true;
+                } else {
                     orderBy.add(parseOrderByItem());
+                    while (peek().type == TokenType.COMMA) {
+                        advance();
+                        orderBy.add(parseOrderByItem());
+                    }
                 }
             }
 
@@ -272,7 +282,7 @@ public class MiniParser {
             }
 
             expect(TokenType.EOF);
-            return new SelectStmt(columns, table, joins, where, groupBy, orderBy, limit);
+            return new SelectStmt(columns, table, joins, where, groupBy, orderBy, chaos, limit);
         }
 
         // create_table_stmt := CREATE TABLE IDENT '(' column_def (',' column_def)* ')'
@@ -451,6 +461,7 @@ public class MiniParser {
             "SELECT category, COUNT(*), SUM(price) FROM products GROUP BY category",
             "SELECT COUNT(*) FROM users WHERE age > 18",
             "CREATE TABLE employees (id INT, name TEXT, salary DOUBLE)",
+            "SELECT * FROM products ORDER BY CHAOS LIMIT 2",
         };
         for (String sql : examples) {
             System.out.println("\nSQL:  " + sql);

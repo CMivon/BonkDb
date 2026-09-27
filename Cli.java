@@ -74,7 +74,11 @@ public class Cli {
         try {
             MiniParser.Stmt stmt = MiniParser.parseSql(sql);
             if (stmt instanceof MiniParser.SelectStmt) {
-                ExecutionDemo.QueryResult result = ExecutionDemo.executeSelect((MiniParser.SelectStmt) stmt, catalog);
+                MiniParser.SelectStmt selectStmt = (MiniParser.SelectStmt) stmt;
+                if (selectStmt.chaos) {
+                    System.out.println("BONK");
+                }
+                ExecutionDemo.QueryResult result = ExecutionDemo.executeSelect(selectStmt, catalog);
                 printTable(result);
             } else if (stmt instanceof MiniParser.CreateTableStmt) {
                 MiniParser.CreateTableStmt createStmt = (MiniParser.CreateTableStmt) stmt;

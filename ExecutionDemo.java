@@ -187,12 +187,18 @@ public class ExecutionDemo {
             }
         }
 
-        // 5. Sort, if requested. Note: this means LIMIT can no longer short-
+        // 5. Sort, if requested -- or shuffle, for ORDER BY CHAOS (bonkDB's
+        // one legitimately silly feature: a "sort" that's actually chaos).
+        // Combined with LIMIT, this doubles as a genuine "N random rows"
+        // operator, since it slots into exactly the same pipeline position
+        // a real sort would. Note: this means LIMIT can no longer short-
         // circuit the scan the way it used to -- we need every matching row
-        // in hand before we know which ones sort to the top. (Real engines
-        // avoid a full sort here with a top-k/heap strategy when the limit
-        // is much smaller than the row count -- worth revisiting later.)
-        if (!stmt.orderBy.isEmpty()) {
+        // in hand before we know which ones sort (or land) at the top. (Real
+        // engines avoid a full sort here with a top-k/heap strategy when the
+        // limit is much smaller than the row count -- worth revisiting later.)
+        if (stmt.chaos) {
+            Collections.shuffle(filtered);
+        } else if (!stmt.orderBy.isEmpty()) {
             final Table sortTable = table; // lambdas need an effectively-final capture
             Comparator<Object[]> comparator = (a, b) -> {
                 for (MiniParser.OrderByItem item : stmt.orderBy) {
@@ -284,6 +290,10 @@ public class ExecutionDemo {
                 }
             }
             result.add(outRow);
+        }
+
+        if (stmt.chaos) {
+            Collections.shuffle(result);
         }
 
         if (stmt.limit != null && result.size() > stmt.limit) {
