@@ -120,7 +120,30 @@ public class ExecutionDemo {
             table = join(table, right, join.on);
         }
 
-        // 2. Resolve which columns to project (handle SELECT *)
+        // 2. Scan + filter (keep full rows -- both ORDER BY and GROUP BY may
+        //    reference columns that aren't in the SELECT list, so we can't
+        //    project yet)
+        List<Object[]> filtered = new ArrayList<>();
+        for (Object[] row : table.rows) {
+            if (stmt.where == null || asBool(evaluate(stmt.where, table, row))) {
+                filtered.add(row);
+            }
+        }
+
+        // 3. GROUP BY / aggregates are a genuinely different shape of
+        //    execution (many rows collapse into one per group), so they get
+        //    their own path rather than being squeezed into the per-row one.
+        boolean hasAggregates = false;
+        for (MiniParser.Expr e : stmt.columns) {
+            if (e instanceof MiniParser.AggregateCall) { hasAggregates = true; break; }
+        }
+        if (hasAggregates || !stmt.groupBy.isEmpty()) {
+            return executeAggregateSelect(stmt, table, filtered);
+        }
+
+        // ---------- Plain (non-aggregate) path ----------
+
+        // 4. Resolve which columns to project (handle SELECT *)
         List<MiniParser.Column> outputColumns;
         if (stmt.columns.size() == 1 && stmt.columns.get(0) instanceof MiniParser.Star) {
             outputColumns = new ArrayList<>();
@@ -132,16 +155,7 @@ public class ExecutionDemo {
             }
         }
 
-        // 3. Scan + filter (keep full rows -- ORDER BY may reference columns
-        //    that aren't in the SELECT list, so we can't project yet)
-        List<Object[]> filtered = new ArrayList<>();
-        for (Object[] row : table.rows) {
-            if (stmt.where == null || asBool(evaluate(stmt.where, table, row))) {
-                filtered.add(row);
-            }
-        }
-
-        // 4. Sort, if requested. Note: this means LIMIT can no longer short-
+        // 5. Sort, if requested. Note: this means LIMIT can no longer short-
         // circuit the scan the way it used to -- we need every matching row
         // in hand before we know which ones sort to the top. (Real engines
         // avoid a full sort here with a top-k/heap strategy when the limit
@@ -160,12 +174,12 @@ public class ExecutionDemo {
             filtered.sort(comparator);
         }
 
-        // 5. Apply LIMIT
+        // 6. Apply LIMIT
         if (stmt.limit != null && filtered.size() > stmt.limit) {
             filtered = filtered.subList(0, stmt.limit);
         }
 
-        // 6. Project
+        // 7. Project
         List<Object[]> result = new ArrayList<>();
         for (Object[] row : filtered) {
             Object[] projected = new Object[outputColumns.size()];
@@ -175,6 +189,121 @@ public class ExecutionDemo {
             result.add(projected);
         }
         return result;
+    }
+
+    // ---------- Aggregate execution path ----------
+    // Groups the already-filtered rows by stmt.groupBy (or treats the whole
+    // set as one group when GROUP BY is absent, matching SQL semantics --
+    // "SELECT COUNT(*) FROM t WHERE ..." always returns exactly one row),
+    // then computes one aggregate value per group per aggregate in the
+    // SELECT list.
+    static List<Object[]> executeAggregateSelect(MiniParser.SelectStmt stmt, Table table, List<Object[]> filtered) {
+        for (MiniParser.Expr e : stmt.columns) {
+            if (e instanceof MiniParser.Star) {
+                throw new RuntimeException("SELECT * is not supported with GROUP BY / aggregates");
+            }
+        }
+        if (!stmt.orderBy.isEmpty()) {
+            // Sorting an aggregated result needs to sort by *output* columns
+            // (e.g. COUNT(*)), not raw table columns -- a different enough
+            // problem that it's left as a future extension.
+            throw new RuntimeException("ORDER BY on GROUP BY / aggregate queries is not yet supported");
+        }
+
+        // Group rows by their GROUP BY column values. A List<Object> works as
+        // a map key because Double/String already have sensible equals/hashCode,
+        // and List's equals/hashCode combine its elements' automatically.
+        Map<List<Object>, List<Object[]>> groups = new LinkedHashMap<>();
+        if (stmt.groupBy.isEmpty()) {
+            groups.put(new ArrayList<>(), filtered); // one group: the whole table
+        } else {
+            for (Object[] row : filtered) {
+                List<Object> key = new ArrayList<>();
+                for (MiniParser.Column gc : stmt.groupBy) {
+                    key.add(row[table.indexOfColumn(gc)]);
+                }
+                groups.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+            }
+        }
+
+        List<Object[]> result = new ArrayList<>();
+        for (Map.Entry<List<Object>, List<Object[]>> entry : groups.entrySet()) {
+            List<Object> groupKey = entry.getKey();
+            List<Object[]> groupRows = entry.getValue();
+
+            Object[] outRow = new Object[stmt.columns.size()];
+            for (int i = 0; i < stmt.columns.size(); i++) {
+                MiniParser.Expr e = stmt.columns.get(i);
+                if (e instanceof MiniParser.AggregateCall) {
+                    outRow[i] = computeAggregate((MiniParser.AggregateCall) e, table, groupRows);
+                } else if (e instanceof MiniParser.Column) {
+                    MiniParser.Column c = (MiniParser.Column) e;
+                    int idx = groupByIndexOf(stmt.groupBy, c);
+                    if (idx == -1) {
+                        throw new RuntimeException(
+                            "Column '" + c + "' must appear in GROUP BY or be used inside an aggregate function");
+                    }
+                    outRow[i] = groupKey.get(idx);
+                } else {
+                    throw new RuntimeException("Unsupported select item: " + e);
+                }
+            }
+            result.add(outRow);
+        }
+
+        if (stmt.limit != null && result.size() > stmt.limit) {
+            result = result.subList(0, stmt.limit);
+        }
+        return result;
+    }
+
+    // Column doesn't override equals(), so matching a SELECT-list column
+    // against the GROUP BY list is done by comparing table+name manually.
+    static int groupByIndexOf(List<MiniParser.Column> groupBy, MiniParser.Column target) {
+        for (int i = 0; i < groupBy.size(); i++) {
+            MiniParser.Column gc = groupBy.get(i);
+            if (Objects.equals(gc.table, target.table) && gc.name.equals(target.name)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    static Object computeAggregate(MiniParser.AggregateCall agg, Table table, List<Object[]> rows) {
+        if (agg.function.equals("COUNT")) {
+            if (agg.star) return (double) rows.size();
+            int idx = table.indexOfColumn(agg.argument);
+            return (double) rows.size(); // no NULLs in this engine yet, so COUNT(col) == COUNT(*)
+        }
+
+        int idx = table.indexOfColumn(agg.argument);
+
+        if (agg.function.equals("SUM") || agg.function.equals("AVG")) {
+            double sum = 0;
+            for (Object[] row : rows) {
+                if (!(row[idx] instanceof Double)) {
+                    throw new RuntimeException(agg.function + " requires a numeric column, got: " + row[idx]);
+                }
+                sum += (Double) row[idx];
+            }
+            if (agg.function.equals("SUM")) return sum;
+            return rows.isEmpty() ? null : sum / rows.size(); // AVG of empty group is NULL, per SQL
+        }
+
+        if (agg.function.equals("MIN") || agg.function.equals("MAX")) {
+            if (rows.isEmpty()) return null;
+            Object best = rows.get(0)[idx];
+            for (int i = 1; i < rows.size(); i++) {
+                Object candidate = rows.get(i)[idx];
+                int cmp = compareValues(candidate, best);
+                if ((agg.function.equals("MIN") && cmp < 0) || (agg.function.equals("MAX") && cmp > 0)) {
+                    best = candidate;
+                }
+            }
+            return best;
+        }
+
+        throw new RuntimeException("Unknown aggregate function: " + agg.function);
     }
 
     // Ordering comparator for sorting (distinct from compare(), which
@@ -231,19 +360,34 @@ public class ExecutionDemo {
         //     }
         // }
 
-        // ---------- LIMIT demo ----------
-        String limitSql = "SELECT * FROM products LIMIT 2";
-        System.out.println("\nSQL: " + limitSql);
-        List<Object[]> limitRows = executeSelect(MiniParser.parseSql(limitSql), catalog);
-        for (Object[] row : limitRows) {
+        // // ---------- LIMIT demo ----------
+        // String limitSql = "SELECT * FROM products LIMIT 2";
+        // System.out.println("\nSQL: " + limitSql);
+        // List<Object[]> limitRows = executeSelect(MiniParser.parseSql(limitSql), catalog);
+        // for (Object[] row : limitRows) {
+        //     System.out.println("  " + Arrays.toString(row));
+        // }
+
+        // // ---------- ORDER BY demo ----------
+        // String orderSql = "SELECT * FROM products ORDER BY price DESC LIMIT 2";
+        // System.out.println("\nSQL: " + orderSql);
+        // List<Object[]> orderRows = executeSelect(MiniParser.parseSql(orderSql), catalog);
+        // for (Object[] row : orderRows) {
+        //     System.out.println("  " + Arrays.toString(row));
+        // }
+
+        // ---------- GROUP BY / aggregate demo ----------
+        String groupSql = "SELECT category, COUNT(*), SUM(price) FROM products GROUP BY category";
+        System.out.println("\nSQL: " + groupSql);
+        List<Object[]> groupRows = executeSelect(MiniParser.parseSql(groupSql), catalog);
+        for (Object[] row : groupRows) {
             System.out.println("  " + Arrays.toString(row));
         }
 
-        // ---------- ORDER BY demo ----------
-        String orderSql = "SELECT * FROM products ORDER BY price DESC LIMIT 2";
-        System.out.println("\nSQL: " + orderSql);
-        List<Object[]> orderRows = executeSelect(MiniParser.parseSql(orderSql), catalog);
-        for (Object[] row : orderRows) {
+        String countSql = "SELECT COUNT(*) FROM users WHERE age > 18";
+        System.out.println("\nSQL: " + countSql);
+        List<Object[]> countRows = executeSelect(MiniParser.parseSql(countSql), catalog);
+        for (Object[] row : countRows) {
             System.out.println("  " + Arrays.toString(row));
         }
 
