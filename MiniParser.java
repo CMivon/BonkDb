@@ -14,14 +14,18 @@ public class MiniParser {
     // ---------- Stage 1: Lexer ----------
 
     enum TokenType {
-        SELECT, FROM, WHERE, AND, OR, NOT, JOIN, ON, LIMIT, ORDER, BY, ASC, DESC,
+        SELECT, FROM, WHERE, AND, OR, NOT, JOIN, ON, LIMIT, ORDER, BY, ASC, DESC, GROUP,
         IDENT, NUMBER, STRING, OP, COMMA, DOT, LPAREN, RPAREN, EOF
     }
 
     static final Set<String> KEYWORDS = Set.of(
         "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "JOIN", "ON", "LIMIT",
-        "ORDER", "BY", "ASC", "DESC"
+        "ORDER", "BY", "ASC", "DESC", "GROUP"
     );
+
+    // Aggregate function names are NOT reserved keywords -- like real SQL,
+    // they're ordinary identifiers that happen to be followed by '('.
+    static final Set<String> AGGREGATE_FUNCTIONS = Set.of("COUNT", "SUM", "AVG", "MIN", "MAX");
 
     static class Token {
         final TokenType type;
@@ -105,6 +109,18 @@ public class MiniParser {
         public String toString() { return "BinaryOp(" + op + ", " + left + ", " + right + ")"; }
     }
 
+    static class AggregateCall implements Expr {
+        final String function; // "COUNT", "SUM", "AVG", "MIN", "MAX"
+        final Column argument;  // null when star is true (COUNT(*))
+        final boolean star;
+        AggregateCall(String function, Column argument, boolean star) {
+            this.function = function; this.argument = argument; this.star = star;
+        }
+        public String toString() {
+            return function + "(" + (star ? "*" : argument.toString()) + ")";
+        }
+    }
+
     static class Join {
         final String table;
         final Expr on;
@@ -124,16 +140,18 @@ public class MiniParser {
         final String table;
         final List<Join> joins;
         final Expr where; // nullable
+        final List<Column> groupBy; // empty if no GROUP BY
         final List<OrderByItem> orderBy; // empty if no ORDER BY
         final Integer limit; // nullable
         SelectStmt(List<Expr> columns, String table, List<Join> joins, Expr where,
-                   List<OrderByItem> orderBy, Integer limit) {
+                   List<Column> groupBy, List<OrderByItem> orderBy, Integer limit) {
             this.columns = columns; this.table = table; this.joins = joins; this.where = where;
-            this.orderBy = orderBy; this.limit = limit;
+            this.groupBy = groupBy; this.orderBy = orderBy; this.limit = limit;
         }
         public String toString() {
             return "SelectStmt(columns=" + columns + ", table=" + table + ", joins=" + joins
-                    + ", where=" + where + ", orderBy=" + orderBy + ", limit=" + limit + ")";
+                    + ", where=" + where + ", groupBy=" + groupBy + ", orderBy=" + orderBy
+                    + ", limit=" + limit + ")";
         }
     }
 
@@ -179,6 +197,17 @@ public class MiniParser {
                 where = parseOrExpr();
             }
 
+            List<Column> groupBy = new ArrayList<>();
+            if (peek().type == TokenType.GROUP) {
+                advance();
+                expect(TokenType.BY);
+                groupBy.add(parseQualifiedColumn());
+                while (peek().type == TokenType.COMMA) {
+                    advance();
+                    groupBy.add(parseQualifiedColumn());
+                }
+            }
+
             List<OrderByItem> orderBy = new ArrayList<>();
             if (peek().type == TokenType.ORDER) {
                 advance();
@@ -201,7 +230,7 @@ public class MiniParser {
             }
 
             expect(TokenType.EOF);
-            return new SelectStmt(columns, table, joins, where, orderBy, limit);
+            return new SelectStmt(columns, table, joins, where, groupBy, orderBy, limit);
         }
 
         // order_by_item := qualified_column [ASC | DESC]
@@ -223,17 +252,53 @@ public class MiniParser {
                 return List.of(new Star());
             }
             List<Expr> columns = new ArrayList<>();
-            columns.add(parseQualifiedColumn());
+            columns.add(parseSelectItem());
             while (peek().type == TokenType.COMMA) {
                 advance();
-                columns.add(parseQualifiedColumn());
+                columns.add(parseSelectItem());
             }
             return columns;
         }
 
+        // select_item := qualified_column | AGG_FUNC '(' ('*' | qualified_column) ')'
+        // Function calls are recognized by "IDENT followed by '('" -- the function
+        // name itself isn't a reserved keyword, same as in real SQL.
+        Expr parseSelectItem() {
+            String first = expect(TokenType.IDENT).value;
+
+            if (peek().type == TokenType.LPAREN) {
+                String func = first.toUpperCase();
+                if (!AGGREGATE_FUNCTIONS.contains(func)) {
+                    throw new RuntimeException("Unknown function: " + first);
+                }
+                advance(); // consume '('
+                boolean star = false;
+                Column arg = null;
+                if (peek().type == TokenType.OP && peek().value.equals("*")) {
+                    if (!func.equals("COUNT")) {
+                        throw new RuntimeException(func + "(*) is not supported -- only COUNT(*) is");
+                    }
+                    advance();
+                    star = true;
+                } else {
+                    arg = parseQualifiedColumnFrom(expect(TokenType.IDENT).value);
+                }
+                expect(TokenType.RPAREN);
+                return new AggregateCall(func, arg, star);
+            }
+
+            return parseQualifiedColumnFrom(first);
+        }
+
         // qualified_column := IDENT ('.' IDENT)?
         Column parseQualifiedColumn() {
-            String first = expect(TokenType.IDENT).value;
+            return parseQualifiedColumnFrom(expect(TokenType.IDENT).value);
+        }
+
+        // Same as parseQualifiedColumn, but the first IDENT has already been consumed
+        // (needed because parseSelectItem must consume an IDENT before it knows
+        // whether it's about to see a function call's '(' or a plain column).
+        Column parseQualifiedColumnFrom(String first) {
             if (peek().type == TokenType.DOT) {
                 advance();
                 String second = expect(TokenType.IDENT).value;
@@ -306,6 +371,8 @@ public class MiniParser {
             "SELECT users.name, orders.total FROM users JOIN orders ON users.id = orders.user_id WHERE orders.total > 50",
             "SELECT * FROM products LIMIT 2",
             "SELECT * FROM products ORDER BY price DESC LIMIT 2",
+            "SELECT category, COUNT(*), SUM(price) FROM products GROUP BY category",
+            "SELECT COUNT(*) FROM users WHERE age > 18",
         };
         for (String sql : examples) {
             System.out.println("\nSQL:  " + sql);
