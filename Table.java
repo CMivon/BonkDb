@@ -1,3 +1,4 @@
+
 import java.util.*;
 import java.io.*;
 
@@ -34,6 +35,24 @@ public class Table {
             throw new RuntimeException("Unknown column '" + column + "' in table " + name);
         }
         return idx;
+    }
+
+    // Resolves a possibly-qualified column reference (e.g. "orders.total" from
+    // a JOIN's virtual table, or a plain "age" from a single table). Falls back
+    // to the unqualified name when the qualifier is just this table's own name,
+    // so "users.age" still works against a table whose columns aren't prefixed.
+    int indexOfColumn(MiniParser.Column col) {
+        if (col.table != null) {
+            String qualified = col.table + "." + col.name;
+            if (columnIndex.containsKey(qualified)) {
+                return columnIndex.get(qualified);
+            }
+            if (col.table.equals(this.name)) {
+                return indexOf(col.name);
+            }
+            throw new RuntimeException("Unknown column '" + qualified + "' in table " + name);
+        }
+        return indexOf(col.name);
     }
 
     // ---------- Persistence: simple text file format ----------
