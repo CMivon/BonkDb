@@ -1,3 +1,4 @@
+
 import java.util.*;
 import java.util.regex.*;
 
@@ -13,11 +14,11 @@ public class MiniParser {
     // ---------- Stage 1: Lexer ----------
 
     enum TokenType {
-        SELECT, FROM, WHERE, AND, OR, NOT, JOIN, ON,
+        SELECT, FROM, WHERE, AND, OR, NOT, JOIN, ON, LIMIT,
         IDENT, NUMBER, STRING, OP, COMMA, DOT, LPAREN, RPAREN, EOF
     }
 
-    static final Set<String> KEYWORDS = Set.of("SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "JOIN", "ON");
+    static final Set<String> KEYWORDS = Set.of("SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "JOIN", "ON", "LIMIT");
 
     static class Token {
         final TokenType type;
@@ -113,11 +114,13 @@ public class MiniParser {
         final String table;
         final List<Join> joins;
         final Expr where; // nullable
-        SelectStmt(List<Expr> columns, String table, List<Join> joins, Expr where) {
-            this.columns = columns; this.table = table; this.joins = joins; this.where = where;
+        final Integer limit; // nullable
+        SelectStmt(List<Expr> columns, String table, List<Join> joins, Expr where, Integer limit) {
+            this.columns = columns; this.table = table; this.joins = joins; this.where = where; this.limit = limit;
         }
         public String toString() {
-            return "SelectStmt(columns=" + columns + ", table=" + table + ", joins=" + joins + ", where=" + where + ")";
+            return "SelectStmt(columns=" + columns + ", table=" + table + ", joins=" + joins
+                    + ", where=" + where + ", limit=" + limit + ")";
         }
     }
 
@@ -140,7 +143,8 @@ public class MiniParser {
             return advance();
         }
 
-        // select_stmt := SELECT select_list FROM IDENT (JOIN IDENT ON condition)* [WHERE condition]
+        // select_stmt := SELECT select_list FROM IDENT (JOIN IDENT ON condition)*
+        //                [WHERE condition] [LIMIT NUMBER]
         SelectStmt parseSelect() {
             expect(TokenType.SELECT);
             List<Expr> columns = parseSelectList();
@@ -161,8 +165,19 @@ public class MiniParser {
                 advance();
                 where = parseOrExpr();
             }
+
+            Integer limit = null;
+            if (peek().type == TokenType.LIMIT) {
+                advance();
+                Token n = expect(TokenType.NUMBER);
+                limit = (int) Double.parseDouble(n.value);
+                if (limit < 0) {
+                    throw new RuntimeException("LIMIT must be non-negative, got " + limit);
+                }
+            }
+
             expect(TokenType.EOF);
-            return new SelectStmt(columns, table, joins, where);
+            return new SelectStmt(columns, table, joins, where, limit);
         }
 
         List<Expr> parseSelectList() {
@@ -252,6 +267,7 @@ public class MiniParser {
             "SELECT name, age FROM users WHERE age > 18",
             "SELECT * FROM products WHERE price <= 100 AND category = 'tools'",
             "SELECT users.name, orders.total FROM users JOIN orders ON users.id = orders.user_id WHERE orders.total > 50",
+            "SELECT * FROM products LIMIT 2",
         };
         for (String sql : examples) {
             System.out.println("\nSQL:  " + sql);
