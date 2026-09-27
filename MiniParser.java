@@ -90,6 +90,9 @@ public class MiniParser {
         Column(String name) { this(null, name); }
         Column(String table, String name) { this.table = table; this.name = name; }
         public String toString() { return "Column(" + (table != null ? table + "." : "") + name + ")"; }
+        // Clean "table.name" / "name" form for user-facing output (e.g. CLI headers),
+        // as opposed to toString()'s "Column(...)" debug form.
+        String display() { return (table != null ? table + "." : "") + name; }
     }
 
     static class Star implements Expr {
@@ -117,7 +120,7 @@ public class MiniParser {
             this.function = function; this.argument = argument; this.star = star;
         }
         public String toString() {
-            return function + "(" + (star ? "*" : argument.toString()) + ")";
+            return function + "(" + (star ? "*" : argument.display()) + ")";
         }
     }
 
