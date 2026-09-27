@@ -132,9 +132,12 @@ public class ExecutionDemo {
             }
         }
 
-        // 3. Scan + filter + project
+        // 3. Scan + filter + project + limit
         List<Object[]> result = new ArrayList<>();
         for (Object[] row : table.rows) {
+            if (stmt.limit != null && result.size() >= stmt.limit) {
+                break; // no point scanning further once we have enough rows
+            }
             if (stmt.where == null || asBool(evaluate(stmt.where, table, row))) {
                 Object[] projected = new Object[outputColumns.size()];
                 for (int i = 0; i < outputColumns.size(); i++) {
@@ -150,10 +153,10 @@ public class ExecutionDemo {
 
     public static void main(String[] args) throws java.io.IOException {
         // Build a sample "users" table
-        // Table users = new Table("users", List.of("name", "age"));
-        // users.insert("Alice", 30.0);
-        // users.insert("Bob", 17.0);
-        // users.insert("Carol", 45.0);
+        Table users = new Table("users", List.of("name", "age"));
+        users.insert("Alice", 30.0);
+        users.insert("Bob", 17.0);
+        users.insert("Carol", 45.0);
 
         Table products = new Table("products", List.of("name", "price", "category"));
         products.insert("Hammer", 25.0, "tools");
@@ -175,7 +178,7 @@ public class ExecutionDemo {
         Map<String, Table> joinCatalog = Map.of("users", usersWithId, "orders", orders);
 
         // String[] queries = {
-        //     "SELECT name, age, id FROM users join orders on users.id = orders.user_id"
+        //     "SELECT name, age, id FROM users WHERE age > 18"
         // //     "SELECT * FROM products WHERE price <= 100 AND category = 'tools'",
         // };
 
@@ -188,8 +191,16 @@ public class ExecutionDemo {
         //     }
         // }
 
+        // ---------- LIMIT demo ----------
+        String limitSql = "SELECT * FROM products LIMIT 2";
+        System.out.println("\nSQL: " + limitSql);
+        List<Object[]> limitRows = executeSelect(MiniParser.parseSql(limitSql), catalog);
+        for (Object[] row : limitRows) {
+            System.out.println("  " + Arrays.toString(row));
+        }
+
         // ---------- Join demo ----------
-        String joinSql = "SELECT users.name, users.id, orders.total FROM users JOIN orders ON users.id = orders.user_id ";
+        String joinSql = "SELECT users.name, orders.total FROM users JOIN orders ON users.id = orders.user_id WHERE orders.total > 50";
         System.out.println("\nSQL: " + joinSql);
         List<Object[]> joinRows = executeSelect(MiniParser.parseSql(joinSql), joinCatalog);
         for (Object[] row : joinRows) {
