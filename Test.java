@@ -1,8 +1,6 @@
 
 import java.util.*;
 
-
-//TODO: Eventually this should be automated. So have expect and compare the results that we get
 /**
  * Test/demo driver for the engine: builds sample tables, runs queries
  * through MiniParser + ExecutionDemo, and prints the results.
@@ -65,8 +63,9 @@ public class Test {
     static void run(String sql, Map<String, Table> catalog) {
         System.out.println("\nSQL: " + sql);
         MiniParser.SelectStmt ast = MiniParser.parseSql(sql);
-        List<Object[]> rows = ExecutionDemo.executeSelect(ast, catalog);
-        for (Object[] row : rows) {
+        ExecutionDemo.QueryResult result = ExecutionDemo.executeSelect(ast, catalog);
+        System.out.println("  " + result.columns);
+        for (Object[] row : result.rows) {
             System.out.println("  " + Arrays.toString(row));
         }
     }

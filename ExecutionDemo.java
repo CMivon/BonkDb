@@ -6,10 +6,24 @@ import java.util.*;
  * runs it against a Table (see Table.java). Tree-walking style -- no
  * separate query plan yet, the AST is evaluated directly.
  *
+ * Pure library code -- no main() here. See Test.java for a runnable
+ * demo/test driver that exercises this class.
+ *
  * This is the seed you'll later refactor into an iterator/Volcano model
- * once you add JOINs.
+ * once you add more JOIN strategies.
  */
 public class ExecutionDemo {
+
+    // A query's results, paired with the display names of its output columns
+    // (e.g. "name", "users.id", "COUNT(*)") -- callers like the CLI need
+    // headers, not just raw row data.
+    static class QueryResult {
+        final List<String> columns;
+        final List<Object[]> rows;
+        QueryResult(List<String> columns, List<Object[]> rows) {
+            this.columns = columns; this.rows = rows;
+        }
+    }
 
     // ---------- Expression evaluator ----------
     // Walks a MiniParser.Expr against one row and produces a Java value.
@@ -103,7 +117,7 @@ public class ExecutionDemo {
 
     // ---------- Select executor ----------
 
-    static List<Object[]> executeSelect(MiniParser.SelectStmt stmt, Map<String, Table> catalog) {
+    static QueryResult executeSelect(MiniParser.SelectStmt stmt, Map<String, Table> catalog) {
         Table base = catalog.get(stmt.table);
         if (base == null) {
             throw new RuntimeException("No such table: " + stmt.table);
@@ -188,7 +202,10 @@ public class ExecutionDemo {
             }
             result.add(projected);
         }
-        return result;
+
+        List<String> columnNames = new ArrayList<>();
+        for (MiniParser.Column c : outputColumns) columnNames.add(c.display());
+        return new QueryResult(columnNames, result);
     }
 
     // ---------- Aggregate execution path ----------
@@ -197,7 +214,7 @@ public class ExecutionDemo {
     // "SELECT COUNT(*) FROM t WHERE ..." always returns exactly one row),
     // then computes one aggregate value per group per aggregate in the
     // SELECT list.
-    static List<Object[]> executeAggregateSelect(MiniParser.SelectStmt stmt, Table table, List<Object[]> filtered) {
+    static QueryResult executeAggregateSelect(MiniParser.SelectStmt stmt, Table table, List<Object[]> filtered) {
         for (MiniParser.Expr e : stmt.columns) {
             if (e instanceof MiniParser.Star) {
                 throw new RuntimeException("SELECT * is not supported with GROUP BY / aggregates");
@@ -254,7 +271,16 @@ public class ExecutionDemo {
         if (stmt.limit != null && result.size() > stmt.limit) {
             result = result.subList(0, stmt.limit);
         }
-        return result;
+
+        List<String> columnNames = new ArrayList<>();
+        for (MiniParser.Expr e : stmt.columns) {
+            if (e instanceof MiniParser.AggregateCall) {
+                columnNames.add(e.toString()); // e.g. "COUNT(*)", "SUM(price)" -- already clean
+            } else {
+                columnNames.add(((MiniParser.Column) e).display());
+            }
+        }
+        return new QueryResult(columnNames, result);
     }
 
     // Column doesn't override equals(), so matching a SELECT-list column
@@ -317,105 +343,4 @@ public class ExecutionDemo {
         }
         throw new RuntimeException("Cannot compare " + left + " and " + right);
     }
-
-    // ---------- Demo ----------
-
-//     public static void main(String[] args) throws java.io.IOException {
-//         // Build a sample "users" table
-//         Table users = new Table("users", List.of("name", "age"));
-//         users.insert("Alice", 30.0);
-//         users.insert("Bob", 17.0);
-//         users.insert("Carol", 45.0);
-
-//         Table products = new Table("products", List.of("name", "price", "category"));
-//         products.insert("Hammer", 25.0, "tools");
-//         products.insert("Wrench", 150.0, "tools");
-//         products.insert("Paint", 40.0, "supplies");
-
-//         // users need an id column for orders to reference -- rebuild with one
-//         Table usersWithId = new Table("users", List.of("id", "name", "age"));
-//         usersWithId.insert(1.0, "Alice", 30.0);
-//         usersWithId.insert(2.0, "Bob", 17.0);
-//         usersWithId.insert(3.0, "Carol", 45.0);
-
-//         Table orders = new Table("orders", List.of("id", "user_id", "total"));
-//         orders.insert(100.0, 1.0, 75.0);
-//         orders.insert(101.0, 1.0, 20.0);
-//         orders.insert(102.0, 3.0, 60.0);
-
-//         Map<String, Table> catalog = Map.of("users", users, "products", products, "orders", orders);
-//         Map<String, Table> joinCatalog = Map.of("users", usersWithId, "orders", orders);
-
-//         // String[] queries = {
-//         //     "SELECT name, age FROM users WHERE age > 18",
-//         //     "SELECT * FROM products WHERE price <= 100 AND category = 'tools'",
-//         // };
-
-//         // for (String sql : queries) {
-//         //     System.out.println("\nSQL: " + sql);
-//         //     MiniParser.SelectStmt ast = MiniParser.parseSql(sql);
-//         //     List<Object[]> rows = executeSelect(ast, catalog);
-//         //     for (Object[] row : rows) {
-//         //         System.out.println("  " + Arrays.toString(row));
-//         //     }
-//         // }
-
-//         // // ---------- LIMIT demo ----------
-//         // String limitSql = "SELECT * FROM products LIMIT 2";
-//         // System.out.println("\nSQL: " + limitSql);
-//         // List<Object[]> limitRows = executeSelect(MiniParser.parseSql(limitSql), catalog);
-//         // for (Object[] row : limitRows) {
-//         //     System.out.println("  " + Arrays.toString(row));
-//         // }
-
-//         // // ---------- ORDER BY demo ----------
-//         // String orderSql = "SELECT * FROM products ORDER BY price DESC LIMIT 2";
-//         // System.out.println("\nSQL: " + orderSql);
-//         // List<Object[]> orderRows = executeSelect(MiniParser.parseSql(orderSql), catalog);
-//         // for (Object[] row : orderRows) {
-//         //     System.out.println("  " + Arrays.toString(row));
-//         // }
-
-//         // ---------- GROUP BY / aggregate demo ----------
-//         String groupSql = "SELECT category, COUNT(*), SUM(price) FROM products GROUP BY category";
-//         System.out.println("\nSQL: " + groupSql);
-//         List<Object[]> groupRows = executeSelect(MiniParser.parseSql(groupSql), catalog);
-//         for (Object[] row : groupRows) {
-//             System.out.println("  " + Arrays.toString(row));
-//         }
-
-//         String countSql = "SELECT COUNT(*) FROM users WHERE age > 18";
-//         System.out.println("\nSQL: " + countSql);
-//         List<Object[]> countRows = executeSelect(MiniParser.parseSql(countSql), catalog);
-//         for (Object[] row : countRows) {
-//             System.out.println("  " + Arrays.toString(row));
-//         }
-
-//         // ---------- Join demo ----------
-//         String joinSql = "SELECT users.name, orders.total FROM users JOIN orders ON users.id = orders.user_id WHERE orders.total > 50";
-//         System.out.println("\nSQL: " + joinSql);
-//         List<Object[]> joinRows = executeSelect(MiniParser.parseSql(joinSql), joinCatalog);
-//         for (Object[] row : joinRows) {
-//             System.out.println("  " + Arrays.toString(row));
-//         }
-
-//         // ---------- Persistence demo ----------
-//         // System.out.println("\n--- Persistence ---");
-
-//         // String path = "users.tbl";
-//         // users.save(path);
-//         // System.out.println("Saved users table to " + path);
-
-//         // // Simulate a fresh process: load the table back from disk into a new object.
-//         // Table reloadedUsers = Table.load(path);
-//         // System.out.println("Reloaded table '" + reloadedUsers.name + "' with " + reloadedUsers.rows.size() + " rows");
-
-//         // Map<String, Table> reloadedCatalog = Map.of("users", reloadedUsers);
-//         // String sql = "SELECT name, age FROM users WHERE age > 18";
-//         // System.out.println("\nSQL (on reloaded table): " + sql);
-//         // List<Object[]> rows = executeSelect(MiniParser.parseSql(sql), reloadedCatalog);
-//         // for (Object[] row : rows) {
-//         //     System.out.println("  " + Arrays.toString(row));
-//         // }
-//     }
 }
