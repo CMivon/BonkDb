@@ -115,6 +115,24 @@ public class ExecutionDemo {
         return joined;
     }
 
+    // ---------- DDL executor ----------
+
+    // Creates a new, empty Table from a CREATE TABLE statement and registers
+    // it in the catalog. Unlike executeSelect, there's no result set to
+    // return -- callers just check for a thrown exception.
+    static void executeCreateTable(MiniParser.CreateTableStmt stmt, Map<String, Table> catalog) {
+        if (catalog.containsKey(stmt.table)) {
+            throw new RuntimeException("Table already exists: " + stmt.table);
+        }
+        List<String> columnNames = new ArrayList<>();
+        List<String> types = new ArrayList<>();
+        for (MiniParser.ColumnDef cd : stmt.columns) {
+            columnNames.add(cd.name);
+            types.add(cd.type);
+        }
+        catalog.put(stmt.table, new Table(stmt.table, columnNames, types));
+    }
+
     // ---------- Select executor ----------
 
     static QueryResult executeSelect(MiniParser.SelectStmt stmt, Map<String, Table> catalog) {

@@ -15,17 +15,33 @@ public class MiniParser {
 
     enum TokenType {
         SELECT, FROM, WHERE, AND, OR, NOT, JOIN, ON, LIMIT, ORDER, BY, ASC, DESC, GROUP,
+        CREATE, TABLE,
         IDENT, NUMBER, STRING, OP, COMMA, DOT, LPAREN, RPAREN, EOF
     }
 
     static final Set<String> KEYWORDS = Set.of(
         "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "JOIN", "ON", "LIMIT",
-        "ORDER", "BY", "ASC", "DESC", "GROUP"
+        "ORDER", "BY", "ASC", "DESC", "GROUP", "CREATE", "TABLE"
     );
 
     // Aggregate function names are NOT reserved keywords -- like real SQL,
     // they're ordinary identifiers that happen to be followed by '('.
     static final Set<String> AGGREGATE_FUNCTIONS = Set.of("COUNT", "SUM", "AVG", "MIN", "MAX");
+
+    // Column type names aren't reserved keywords either -- recognized
+    // positionally in CREATE TABLE, same idea as aggregate function names.
+    // The storage layer only really has two types under the hood, so every
+    // common SQL spelling collapses down to one of "DOUBLE" or "STRING".
+    static final Set<String> NUMERIC_TYPE_NAMES = Set.of("INT", "INTEGER", "DOUBLE", "FLOAT", "NUMBER", "NUM");
+    static final Set<String> TEXT_TYPE_NAMES = Set.of("TEXT", "VARCHAR", "STRING", "STR", "CHAR");
+
+    static String normalizeTypeName(String raw) {
+        String upper = raw.toUpperCase();
+        if (NUMERIC_TYPE_NAMES.contains(upper)) return "DOUBLE";
+        if (TEXT_TYPE_NAMES.contains(upper)) return "STRING";
+        throw new RuntimeException("Unknown column type: " + raw
+            + " (expected one of " + NUMERIC_TYPE_NAMES + " or " + TEXT_TYPE_NAMES + ")");
+    }
 
     static class Token {
         final TokenType type;
@@ -81,6 +97,11 @@ public class MiniParser {
     }
 
     // ---------- AST node definitions ----------
+
+    // Marker for any top-level statement (SELECT, CREATE TABLE, ...) so
+    // parseSql() can return whichever kind it parsed, and callers dispatch
+    // on the concrete type to decide what to do with it.
+    interface Stmt {}
 
     interface Expr {}
 
@@ -138,7 +159,7 @@ public class MiniParser {
         public String toString() { return column + (descending ? " DESC" : " ASC"); }
     }
 
-    static class SelectStmt {
+    static class SelectStmt implements Stmt {
         final List<Expr> columns;
         final String table;
         final List<Join> joins;
@@ -155,6 +176,24 @@ public class MiniParser {
             return "SelectStmt(columns=" + columns + ", table=" + table + ", joins=" + joins
                     + ", where=" + where + ", groupBy=" + groupBy + ", orderBy=" + orderBy
                     + ", limit=" + limit + ")";
+        }
+    }
+
+    static class ColumnDef {
+        final String name;
+        final String type; // normalized internal type: "DOUBLE" or "STRING"
+        ColumnDef(String name, String type) { this.name = name; this.type = type; }
+        public String toString() { return name + " " + type; }
+    }
+
+    static class CreateTableStmt implements Stmt {
+        final String table;
+        final List<ColumnDef> columns;
+        CreateTableStmt(String table, List<ColumnDef> columns) {
+            this.table = table; this.columns = columns;
+        }
+        public String toString() {
+            return "CreateTableStmt(table=" + table + ", columns=" + columns + ")";
         }
     }
 
@@ -234,6 +273,33 @@ public class MiniParser {
 
             expect(TokenType.EOF);
             return new SelectStmt(columns, table, joins, where, groupBy, orderBy, limit);
+        }
+
+        // create_table_stmt := CREATE TABLE IDENT '(' column_def (',' column_def)* ')'
+        CreateTableStmt parseCreateTable() {
+            expect(TokenType.CREATE);
+            expect(TokenType.TABLE);
+            String table = expect(TokenType.IDENT).value;
+            expect(TokenType.LPAREN);
+
+            List<ColumnDef> columns = new ArrayList<>();
+            columns.add(parseColumnDef());
+            while (peek().type == TokenType.COMMA) {
+                advance();
+                columns.add(parseColumnDef());
+            }
+
+            expect(TokenType.RPAREN);
+            expect(TokenType.EOF);
+            return new CreateTableStmt(table, columns);
+        }
+
+        // column_def := IDENT IDENT   -- e.g. "age INT" ; the second IDENT is
+        // validated against known type spellings by normalizeTypeName().
+        ColumnDef parseColumnDef() {
+            String name = expect(TokenType.IDENT).value;
+            String rawType = expect(TokenType.IDENT).value;
+            return new ColumnDef(name, normalizeTypeName(rawType));
         }
 
         // order_by_item := qualified_column [ASC | DESC]
@@ -360,9 +426,17 @@ public class MiniParser {
         }
     }
 
-    static SelectStmt parseSql(String sql) {
+    static Stmt parseSql(String sql) {
         List<Token> tokens = tokenize(sql);
-        return new Parser(tokens).parseSelect();
+        Parser parser = new Parser(tokens);
+        Token first = parser.peek();
+        if (first.type == TokenType.SELECT) {
+            return parser.parseSelect();
+        }
+        if (first.type == TokenType.CREATE) {
+            return parser.parseCreateTable();
+        }
+        throw new RuntimeException("Expected SELECT or CREATE, got " + first.type);
     }
 
     // ---------- Demo ----------
@@ -376,10 +450,11 @@ public class MiniParser {
             "SELECT * FROM products ORDER BY price DESC LIMIT 2",
             "SELECT category, COUNT(*), SUM(price) FROM products GROUP BY category",
             "SELECT COUNT(*) FROM users WHERE age > 18",
+            "CREATE TABLE employees (id INT, name TEXT, salary DOUBLE)",
         };
         for (String sql : examples) {
             System.out.println("\nSQL:  " + sql);
-            SelectStmt ast = parseSql(sql);
+            Stmt ast = parseSql(sql);
             System.out.println("AST:  " + ast);
         }
     }
