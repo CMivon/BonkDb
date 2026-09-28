@@ -22,6 +22,7 @@ public class Test {
         testPersistence();
         testCreateTable();
         testInsertAndDelete();
+        testUpdate();
     }
 
     // ---------- Shared sample data ----------
@@ -184,6 +185,51 @@ public class Test {
         deleted = ExecutionDemo.executeDelete((MiniParser.DeleteStmt) MiniParser.parseSql(delete2), catalog);
         System.out.println("  Deleted " + deleted + " row(s)");
         run("SELECT * FROM employees", catalog);
+    }
+
+    static void testUpdate() {
+        System.out.println("\n--- UPDATE ---");
+        Map<String, Table> catalog = new HashMap<>();
+        ExecutionDemo.executeCreateTable(
+            (MiniParser.CreateTableStmt) MiniParser.parseSql(
+                "CREATE TABLE employees (id INT, name TEXT, salary DOUBLE)"),
+            catalog);
+        ExecutionDemo.executeInsert(
+            (MiniParser.InsertStmt) MiniParser.parseSql(
+                "INSERT INTO employees VALUES (1, 'Dana', 90000)"), catalog);
+        ExecutionDemo.executeInsert(
+            (MiniParser.InsertStmt) MiniParser.parseSql(
+                "INSERT INTO employees VALUES (2, 'Eve', 85000)"), catalog);
+
+        run("SELECT * FROM employees", catalog);
+
+        String update1 = "UPDATE employees SET salary = 95000 WHERE name = 'Dana'";
+        System.out.println("\nSQL: " + update1);
+        int updated = ExecutionDemo.executeUpdate((MiniParser.UpdateStmt) MiniParser.parseSql(update1), catalog);
+        System.out.println("  Updated " + updated + " row(s)");
+        run("SELECT * FROM employees", catalog);
+
+        String update2 = "UPDATE employees SET name = 'Evie', salary = 87000 WHERE id = 2";
+        System.out.println("\nSQL: " + update2);
+        updated = ExecutionDemo.executeUpdate((MiniParser.UpdateStmt) MiniParser.parseSql(update2), catalog);
+        System.out.println("  Updated " + updated + " row(s)");
+        run("SELECT * FROM employees", catalog);
+
+        String update3 = "UPDATE employees SET salary = 100000"; // no WHERE -- updates every row
+        System.out.println("\nSQL: " + update3);
+        updated = ExecutionDemo.executeUpdate((MiniParser.UpdateStmt) MiniParser.parseSql(update3), catalog);
+        System.out.println("  Updated " + updated + " row(s)");
+        run("SELECT * FROM employees", catalog);
+
+        // A bad-type update should be rejected, same as INSERT/CREATE TABLE validation.
+        try {
+            ExecutionDemo.executeUpdate(
+                (MiniParser.UpdateStmt) MiniParser.parseSql("UPDATE employees SET salary = 'a lot'"),
+                catalog);
+            System.out.println("  ERROR: expected a bad-type UPDATE to fail, but it didn't");
+        } catch (RuntimeException e) {
+            System.out.println("  Got expected validation error: " + e.getMessage());
+        }
     }
 
     static void testPersistence() throws java.io.IOException {

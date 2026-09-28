@@ -5,9 +5,9 @@ import java.util.*;
 /**
  * Basic interactive command-line REPL for the engine.
  *
- * Type a SELECT, CREATE TABLE, INSERT, or DELETE statement ending in ';'
- * and press Enter (multi-line statements are fine -- it keeps reading
- * until it sees the ';'). Meta commands (not SQL) start with '.':
+ * Type a SELECT, CREATE TABLE, INSERT, UPDATE, or DELETE statement ending
+ * in ';' and press Enter (multi-line statements are fine -- it keeps
+ * reading until it sees the ';'). Meta commands (not SQL) start with '.':
  *
  *   .tables            list loaded tables and their columns
  *   .load <name> <path> load a table from a saved .tbl file (see Table.save)
@@ -92,6 +92,11 @@ public class Cli {
                 int deleted = ExecutionDemo.executeDelete(deleteStmt, catalog);
                 System.out.println(deleted + " row" + (deleted == 1 ? "" : "s") + " bonked out of '"
                     + deleteStmt.table + "'.");
+            } else if (stmt instanceof MiniParser.UpdateStmt) {
+                MiniParser.UpdateStmt updateStmt = (MiniParser.UpdateStmt) stmt;
+                int updated = ExecutionDemo.executeUpdate(updateStmt, catalog);
+                System.out.println(updated + " row" + (updated == 1 ? "" : "s") + " bonked into shape in '"
+                    + updateStmt.table + "'.");
             } else {
                 System.out.println("Error: don't know how to run statement: " + stmt);
             }
