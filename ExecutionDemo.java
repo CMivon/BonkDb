@@ -199,6 +199,47 @@ public class ExecutionDemo {
         return deletedCount;
     }
 
+    // Updates matching rows (or every row, if WHERE is absent) in place and
+    // returns how many were changed. Column indices and type validation are
+    // resolved once up front -- before touching any row -- so an unknown
+    // column or a bad-type value fails the whole statement rather than
+    // leaving some rows updated and others not.
+    static int executeUpdate(MiniParser.UpdateStmt stmt, Map<String, Table> catalog) {
+        Table table = catalog.get(stmt.table);
+        if (table == null) {
+            throw new RuntimeException("No such table: " + stmt.table);
+        }
+
+        List<Integer> indices = new ArrayList<>();
+        List<Object> newValues = new ArrayList<>();
+        for (MiniParser.Assignment a : stmt.assignments) {
+            int idx = table.indexOf(a.column); // throws on unknown column
+            Object value = a.value.value;
+            if (table.types != null) {
+                String expected = table.types.get(idx);
+                boolean ok = expected.equals("DOUBLE") ? value instanceof Double : value instanceof String;
+                if (!ok) {
+                    throw new RuntimeException("Column '" + a.column + "' expects " + expected
+                        + ", got " + (value == null ? "null" : value.getClass().getSimpleName())
+                        + " (" + value + ")");
+                }
+            }
+            indices.add(idx);
+            newValues.add(value);
+        }
+
+        int updatedCount = 0;
+        for (Object[] row : table.rows) {
+            if (stmt.where == null || asBool(evaluate(stmt.where, table, row))) {
+                for (int i = 0; i < indices.size(); i++) {
+                    row[indices.get(i)] = newValues.get(i);
+                }
+                updatedCount++;
+            }
+        }
+        return updatedCount;
+    }
+
     // ---------- Select executor ----------
 
     static QueryResult executeSelect(MiniParser.SelectStmt stmt, Map<String, Table> catalog) {
