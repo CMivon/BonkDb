@@ -5,9 +5,9 @@ import java.util.*;
 /**
  * Basic interactive command-line REPL for the engine.
  *
- * Type a SELECT or CREATE TABLE statement ending in ';' and press Enter
- * (multi-line statements are fine -- it keeps reading until it sees the
- * ';'). Meta commands (not SQL) start with '.':
+ * Type a SELECT, CREATE TABLE, INSERT, or DELETE statement ending in ';'
+ * and press Enter (multi-line statements are fine -- it keeps reading
+ * until it sees the ';'). Meta commands (not SQL) start with '.':
  *
  *   .tables            list loaded tables and their columns
  *   .load <name> <path> load a table from a saved .tbl file (see Table.save)
@@ -15,10 +15,9 @@ import java.util.*;
  *   .help               show this message
  *   .exit / .quit       quit
  *
- * There's still no INSERT, so a CREATE TABLE'd table stays empty for the
- * rest of the session -- but it starts with the same sample data as
- * Test.java (users, products, orders) so there's something to query
- * right away regardless.
+ * Starts with the same sample data as Test.java (users, products, orders)
+ * so there's something to query right away, but you can now CREATE TABLE,
+ * INSERT, and DELETE your own data through SQL too.
  */
 public class Cli {
 
@@ -76,7 +75,7 @@ public class Cli {
             if (stmt instanceof MiniParser.SelectStmt) {
                 MiniParser.SelectStmt selectStmt = (MiniParser.SelectStmt) stmt;
                 if (selectStmt.chaos) {
-                    System.out.println("BONK");
+                    System.out.println("bonk! shuffling results into chaos...");
                 }
                 ExecutionDemo.QueryResult result = ExecutionDemo.executeSelect(selectStmt, catalog);
                 printTable(result);
@@ -84,6 +83,15 @@ public class Cli {
                 MiniParser.CreateTableStmt createStmt = (MiniParser.CreateTableStmt) stmt;
                 ExecutionDemo.executeCreateTable(createStmt, catalog);
                 System.out.println("Table '" + createStmt.table + "' created.");
+            } else if (stmt instanceof MiniParser.InsertStmt) {
+                MiniParser.InsertStmt insertStmt = (MiniParser.InsertStmt) stmt;
+                ExecutionDemo.executeInsert(insertStmt, catalog);
+                System.out.println("1 row inserted into '" + insertStmt.table + "'.");
+            } else if (stmt instanceof MiniParser.DeleteStmt) {
+                MiniParser.DeleteStmt deleteStmt = (MiniParser.DeleteStmt) stmt;
+                int deleted = ExecutionDemo.executeDelete(deleteStmt, catalog);
+                System.out.println(deleted + " row" + (deleted == 1 ? "" : "s") + " bonked out of '"
+                    + deleteStmt.table + "'.");
             } else {
                 System.out.println("Error: don't know how to run statement: " + stmt);
             }

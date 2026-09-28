@@ -15,13 +15,14 @@ public class MiniParser {
 
     enum TokenType {
         SELECT, FROM, WHERE, AND, OR, NOT, JOIN, ON, LIMIT, ORDER, BY, ASC, DESC, GROUP,
-        CREATE, TABLE,
+        CREATE, TABLE, INSERT, INTO, VALUES, DELETE,
         IDENT, NUMBER, STRING, OP, COMMA, DOT, LPAREN, RPAREN, EOF
     }
 
     static final Set<String> KEYWORDS = Set.of(
         "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "JOIN", "ON", "LIMIT",
-        "ORDER", "BY", "ASC", "DESC", "GROUP", "CREATE", "TABLE"
+        "ORDER", "BY", "ASC", "DESC", "GROUP", "CREATE", "TABLE",
+        "INSERT", "INTO", "VALUES", "DELETE"
     );
 
     // Aggregate function names are NOT reserved keywords -- like real SQL,
@@ -198,6 +199,32 @@ public class MiniParser {
         }
     }
 
+    static class InsertStmt implements Stmt {
+        final String table;
+        // Empty means no column list was given -- values must cover every
+        // table column, in the table's own declared order (resolved at
+        // execution time, since the parser doesn't know the schema).
+        final List<String> columns;
+        final List<Literal> values;
+        InsertStmt(String table, List<String> columns, List<Literal> values) {
+            this.table = table; this.columns = columns; this.values = values;
+        }
+        public String toString() {
+            return "InsertStmt(table=" + table + ", columns=" + columns + ", values=" + values + ")";
+        }
+    }
+
+    static class DeleteStmt implements Stmt {
+        final String table;
+        final Expr where; // nullable -- null means delete every row
+        DeleteStmt(String table, Expr where) {
+            this.table = table; this.where = where;
+        }
+        public String toString() {
+            return "DeleteStmt(table=" + table + ", where=" + where + ")";
+        }
+    }
+
     // ---------- Stage 2/3: Recursive descent parser ----------
 
     static class Parser {
@@ -310,6 +337,68 @@ public class MiniParser {
             String name = expect(TokenType.IDENT).value;
             String rawType = expect(TokenType.IDENT).value;
             return new ColumnDef(name, normalizeTypeName(rawType));
+        }
+
+        // insert_stmt := INSERT INTO IDENT ['(' IDENT (',' IDENT)* ')']
+        //                VALUES '(' literal (',' literal)* ')'
+        InsertStmt parseInsert() {
+            expect(TokenType.INSERT);
+            expect(TokenType.INTO);
+            String table = expect(TokenType.IDENT).value;
+
+            List<String> columns = new ArrayList<>();
+            if (peek().type == TokenType.LPAREN) {
+                advance();
+                columns.add(expect(TokenType.IDENT).value);
+                while (peek().type == TokenType.COMMA) {
+                    advance();
+                    columns.add(expect(TokenType.IDENT).value);
+                }
+                expect(TokenType.RPAREN);
+            }
+
+            expect(TokenType.VALUES);
+            expect(TokenType.LPAREN);
+            List<Literal> values = new ArrayList<>();
+            values.add(parseLiteral());
+            while (peek().type == TokenType.COMMA) {
+                advance();
+                values.add(parseLiteral());
+            }
+            expect(TokenType.RPAREN);
+            expect(TokenType.EOF);
+            return new InsertStmt(table, columns, values);
+        }
+
+        // literal := NUMBER | STRING   -- VALUES only takes literal values,
+        // not column references or expressions, at least for now.
+        Literal parseLiteral() {
+            Token tok = peek();
+            if (tok.type == TokenType.NUMBER) {
+                advance();
+                return new Literal(Double.parseDouble(tok.value));
+            }
+            if (tok.type == TokenType.STRING) {
+                advance();
+                String s = tok.value;
+                s = s.substring(1, s.length() - 1).replace("''", "'");
+                return new Literal(s);
+            }
+            throw new RuntimeException("Expected a literal value in VALUES, got " + tok.type);
+        }
+
+        // delete_stmt := DELETE FROM IDENT [WHERE condition]
+        DeleteStmt parseDelete() {
+            expect(TokenType.DELETE);
+            expect(TokenType.FROM);
+            String table = expect(TokenType.IDENT).value;
+            Expr where = null;
+            if (peek().type == TokenType.WHERE) {
+                advance();
+                where = parseOrExpr();
+            }
+            expect(TokenType.EOF);
+            return new DeleteStmt(table, where);
         }
 
         // order_by_item := qualified_column [ASC | DESC]
@@ -446,7 +535,13 @@ public class MiniParser {
         if (first.type == TokenType.CREATE) {
             return parser.parseCreateTable();
         }
-        throw new RuntimeException("Expected SELECT or CREATE, got " + first.type);
+        if (first.type == TokenType.INSERT) {
+            return parser.parseInsert();
+        }
+        if (first.type == TokenType.DELETE) {
+            return parser.parseDelete();
+        }
+        throw new RuntimeException("Expected SELECT, CREATE, INSERT, or DELETE, got " + first.type);
     }
 
     // ---------- Demo ----------
@@ -462,6 +557,10 @@ public class MiniParser {
             "SELECT COUNT(*) FROM users WHERE age > 18",
             "CREATE TABLE employees (id INT, name TEXT, salary DOUBLE)",
             "SELECT * FROM products ORDER BY CHAOS LIMIT 2",
+            "INSERT INTO employees (id, name, salary) VALUES (1, 'Dana', 90000)",
+            "INSERT INTO employees VALUES (2, 'Eve', 85000)",
+            "DELETE FROM employees WHERE salary < 90000",
+            "DELETE FROM employees",
         };
         for (String sql : examples) {
             System.out.println("\nSQL:  " + sql);

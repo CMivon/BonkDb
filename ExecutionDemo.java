@@ -133,6 +133,72 @@ public class ExecutionDemo {
         catalog.put(stmt.table, new Table(stmt.table, columnNames, types));
     }
 
+    // Inserts one row. Delegates the actual insert (and its type validation
+    // against a CREATE TABLE'd schema) to Table.insert() -- this method's
+    // only job is resolving which VALUES entry goes in which column position.
+    static void executeInsert(MiniParser.InsertStmt stmt, Map<String, Table> catalog) {
+        Table table = catalog.get(stmt.table);
+        if (table == null) {
+            throw new RuntimeException("No such table: " + stmt.table);
+        }
+
+        Object[] row;
+        if (stmt.columns.isEmpty()) {
+            // No column list: values must cover every column, in the
+            // table's own declared order.
+            if (stmt.values.size() != table.columns.size()) {
+                throw new RuntimeException("Table '" + stmt.table + "' has " + table.columns.size()
+                    + " columns but " + stmt.values.size() + " values were given");
+            }
+            row = new Object[stmt.values.size()];
+            for (int i = 0; i < stmt.values.size(); i++) {
+                row[i] = stmt.values.get(i).value;
+            }
+        } else {
+            // Explicit column list: this engine has no NULL support, so every
+            // table column must be named -- partial inserts aren't possible.
+            if (stmt.columns.size() != table.columns.size()) {
+                throw new RuntimeException("INSERT with a partial column list is not supported "
+                    + "(no NULL support yet) -- name all " + table.columns.size() + " columns of '"
+                    + stmt.table + "'");
+            }
+            if (stmt.columns.size() != stmt.values.size()) {
+                throw new RuntimeException("Column count (" + stmt.columns.size()
+                    + ") doesn't match value count (" + stmt.values.size() + ")");
+            }
+            row = new Object[table.columns.size()];
+            for (int i = 0; i < stmt.columns.size(); i++) {
+                int idx = table.indexOf(stmt.columns.get(i)); // throws on unknown column
+                row[idx] = stmt.values.get(i).value;
+            }
+        }
+
+        table.insert(row); // reuses Table's own type validation
+    }
+
+    // Deletes matching rows (or every row, if WHERE is absent) and returns
+    // how many were removed, so callers (like the CLI) can report it.
+    static int executeDelete(MiniParser.DeleteStmt stmt, Map<String, Table> catalog) {
+        Table table = catalog.get(stmt.table);
+        if (table == null) {
+            throw new RuntimeException("No such table: " + stmt.table);
+        }
+
+        List<Object[]> kept = new ArrayList<>();
+        int deletedCount = 0;
+        for (Object[] row : table.rows) {
+            boolean matches = stmt.where == null || asBool(evaluate(stmt.where, table, row));
+            if (matches) {
+                deletedCount++;
+            } else {
+                kept.add(row);
+            }
+        }
+        table.rows.clear();
+        table.rows.addAll(kept);
+        return deletedCount;
+    }
+
     // ---------- Select executor ----------
 
     static QueryResult executeSelect(MiniParser.SelectStmt stmt, Map<String, Table> catalog) {
