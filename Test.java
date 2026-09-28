@@ -21,6 +21,7 @@ public class Test {
         testJoin();
         testPersistence();
         testCreateTable();
+        testInsertAndDelete();
     }
 
     // ---------- Shared sample data ----------
@@ -141,6 +142,48 @@ public class Test {
         } catch (RuntimeException e) {
             System.out.println("  Got expected duplicate-table error: " + e.getMessage());
         }
+    }
+
+    static void testInsertAndDelete() {
+        System.out.println("\n--- INSERT / DELETE ---");
+        Map<String, Table> catalog = new HashMap<>();
+        ExecutionDemo.executeCreateTable(
+            (MiniParser.CreateTableStmt) MiniParser.parseSql(
+                "CREATE TABLE employees (id INT, name TEXT, salary DOUBLE)"),
+            catalog);
+
+        String insert1 = "INSERT INTO employees (id, name, salary) VALUES (1, 'Dana', 90000)";
+        System.out.println("\nSQL: " + insert1);
+        ExecutionDemo.executeInsert((MiniParser.InsertStmt) MiniParser.parseSql(insert1), catalog);
+
+        String insert2 = "INSERT INTO employees VALUES (2, 'Eve', 85000)"; // no column list
+        System.out.println("SQL: " + insert2);
+        ExecutionDemo.executeInsert((MiniParser.InsertStmt) MiniParser.parseSql(insert2), catalog);
+
+        run("SELECT * FROM employees", catalog);
+
+        // A bad-type insert should be rejected, same as the direct Table.insert() test earlier.
+        try {
+            ExecutionDemo.executeInsert(
+                (MiniParser.InsertStmt) MiniParser.parseSql(
+                    "INSERT INTO employees VALUES ('not-an-id', 'Frank', 70000)"),
+                catalog);
+            System.out.println("  ERROR: expected a bad-type INSERT to fail, but it didn't");
+        } catch (RuntimeException e) {
+            System.out.println("  Got expected validation error: " + e.getMessage());
+        }
+
+        String delete1 = "DELETE FROM employees WHERE salary < 90000";
+        System.out.println("\nSQL: " + delete1);
+        int deleted = ExecutionDemo.executeDelete((MiniParser.DeleteStmt) MiniParser.parseSql(delete1), catalog);
+        System.out.println("  Deleted " + deleted + " row(s)");
+        run("SELECT * FROM employees", catalog);
+
+        String delete2 = "DELETE FROM employees"; // no WHERE -- deletes everything
+        System.out.println("\nSQL: " + delete2);
+        deleted = ExecutionDemo.executeDelete((MiniParser.DeleteStmt) MiniParser.parseSql(delete2), catalog);
+        System.out.println("  Deleted " + deleted + " row(s)");
+        run("SELECT * FROM employees", catalog);
     }
 
     static void testPersistence() throws java.io.IOException {
