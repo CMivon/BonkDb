@@ -56,6 +56,41 @@ public class ExecutionDemo {
         throw new RuntimeException("Cannot evaluate expression: " + expr);
     }
 
+    // "vibes = 'immaculate'" is a gimmick: if it appears *anywhere* in a
+    // condition -- alone, ANDed/ORed with real conditions, nested arbitrarily
+    // deep -- the whole condition is treated as unconditionally true, and is
+    // never actually evaluated at all. This is checked once per statement
+    // (not per row -- it doesn't depend on row data) via isUnconditionallyTrue,
+    // which every WHERE/ON call site below goes through instead of calling
+    // evaluate() directly.
+    static boolean isUnconditionallyTrue(MiniParser.Expr condition) {
+        return condition == null || containsImmaculateVibes(condition);
+    }
+
+    static boolean containsImmaculateVibes(MiniParser.Expr expr) {
+        if (!(expr instanceof MiniParser.BinaryOp)) {
+            return false; // Column/Literal/Star leaves can't contain it
+        }
+        MiniParser.BinaryOp bin = (MiniParser.BinaryOp) expr;
+        if (bin.op.equals("=") && isVibesImmaculate(bin.left, bin.right)) {
+            return true;
+        }
+        return containsImmaculateVibes(bin.left) || containsImmaculateVibes(bin.right);
+    }
+
+    static boolean isVibesImmaculate(MiniParser.Expr a, MiniParser.Expr b) {
+        return (isVibesColumn(a) && isImmaculateLiteral(b)) || (isVibesColumn(b) && isImmaculateLiteral(a));
+    }
+
+    static boolean isVibesColumn(MiniParser.Expr e) {
+        return e instanceof MiniParser.Column && ((MiniParser.Column) e).name.equalsIgnoreCase("vibes");
+    }
+
+    static boolean isImmaculateLiteral(MiniParser.Expr e) {
+        return e instanceof MiniParser.Literal
+            && "immaculate".equalsIgnoreCase(String.valueOf(((MiniParser.Literal) e).value));
+    }
+
     static boolean asBool(Object o) {
         if (o instanceof Boolean) return (Boolean) o;
         throw new RuntimeException("Expected boolean, got: " + o);
@@ -101,13 +136,14 @@ public class ExecutionDemo {
 
         Table joined = new Table(left.name + "_JOIN_" + right.name, combinedColumns);
 
+        boolean alwaysMatches = isUnconditionallyTrue(on); // e.g. "ON vibes = 'immaculate'" -> full cross join
         for (Object[] leftRow : left.rows) {
             for (Object[] rightRow : right.rows) {
                 Object[] combinedRow = new Object[leftRow.length + rightRow.length];
                 System.arraycopy(leftRow, 0, combinedRow, 0, leftRow.length);
                 System.arraycopy(rightRow, 0, combinedRow, leftRow.length, rightRow.length);
 
-                if (on == null || asBool(evaluate(on, joined, combinedRow))) {
+                if (alwaysMatches || asBool(evaluate(on, joined, combinedRow))) {
                     joined.rows.add(combinedRow);
                 }
             }
@@ -186,8 +222,9 @@ public class ExecutionDemo {
 
         List<Object[]> kept = new ArrayList<>();
         int deletedCount = 0;
+        boolean alwaysMatches = isUnconditionallyTrue(stmt.where); // e.g. WHERE vibes = 'immaculate' -> deletes everything
         for (Object[] row : table.rows) {
-            boolean matches = stmt.where == null || asBool(evaluate(stmt.where, table, row));
+            boolean matches = alwaysMatches || asBool(evaluate(stmt.where, table, row));
             if (matches) {
                 deletedCount++;
             } else {
@@ -229,8 +266,9 @@ public class ExecutionDemo {
         }
 
         int updatedCount = 0;
+        boolean alwaysMatches = isUnconditionallyTrue(stmt.where); // e.g. WHERE vibes = 'immaculate' -> updates everything
         for (Object[] row : table.rows) {
-            if (stmt.where == null || asBool(evaluate(stmt.where, table, row))) {
+            if (alwaysMatches || asBool(evaluate(stmt.where, table, row))) {
                 for (int i = 0; i < indices.size(); i++) {
                     row[indices.get(i)] = newValues.get(i);
                 }
@@ -263,8 +301,9 @@ public class ExecutionDemo {
         //    reference columns that aren't in the SELECT list, so we can't
         //    project yet)
         List<Object[]> filtered = new ArrayList<>();
+        boolean alwaysMatches = isUnconditionallyTrue(stmt.where); // e.g. WHERE vibes = 'immaculate' -> every row matches
         for (Object[] row : table.rows) {
-            if (stmt.where == null || asBool(evaluate(stmt.where, table, row))) {
+            if (alwaysMatches || asBool(evaluate(stmt.where, table, row))) {
                 filtered.add(row);
             }
         }
