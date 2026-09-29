@@ -1,6 +1,7 @@
 
 import java.io.*;
 import java.util.*;
+import Art.Art;
 
 /**
  * Basic interactive command-line REPL for the engine.
@@ -26,6 +27,7 @@ public class Cli {
     public static void main(String[] args) throws IOException {
         seedSampleData();
 
+        System.out.println(Art.bonkMascot());
         System.out.println("Mini SQL engine -- type .help for commands, .exit to quit.");
         BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
         StringBuilder buffer = new StringBuilder();
