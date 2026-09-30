@@ -2,6 +2,8 @@ package Engine;
 
 import java.util.*;
 
+//TODO: We need a more creative way to corrupt data instead of just adding words to it.
+// Maybe Swap data around? Maybe make affect the whole structure of Table so it crashes?
 /**
  * Chaos-mode gimmick: picks a random table, a random row, and a random
  * column within it, then appends "TEST" onto whatever value is already
@@ -62,7 +64,7 @@ public class CorruptData {
 
         Object[] row = table.rows.get(rowIdx);
         Object oldValue = row[colIdx];
-        Object newValue = String.valueOf(oldValue) + "TEST";
+        Object newValue = "BONK_" + String.valueOf(oldValue) + "_BONK";
         row[colIdx] = newValue;
 
         System.out.println("bonked '" + table.name + "' row " + rowIdx + ", column '"
