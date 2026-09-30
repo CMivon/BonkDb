@@ -22,8 +22,19 @@ public class Art {
                "    '            '\n";
     }
 
+    public static String panicWave() {
+        return "~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~\n" +
+               " ____   ___    _   _  ___  ____ \n" +
+               "|  _ \\ / _ \\  | \\ | ||_ _|/ ___|\n" +
+               "| |_) | |_| | |  \\| | | || |    \n" +
+               "|  __/|  _  | | |\\  | | || |___ \n" +
+               "|_|   |_| |_| |_| \\_||___|\\____|\n" +
+               "~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~\n";
+    }
+
     public static void main(String[] args) {
         System.out.println(bonkMascot());
+        System.out.println(panicWave());
         System.out.println("      bonkDB -- databases, bonked into shape.");
     }
 }
