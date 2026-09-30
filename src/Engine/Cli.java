@@ -1,3 +1,4 @@
+
 package Engine;
 
 import java.io.*;
@@ -160,9 +161,16 @@ public class Cli {
                     ".tables              list loaded tables and their columns\n" +
                     ".load <name> <path>  load a table from a saved .tbl file\n" +
                     ".save <name> [path]  save a table to a .tbl file (defaults to <name>.tbl)\n" +
+                    ".panic               corrupt a random cell in a random table -- chaos mode\n" +
                     ".help                show this message\n" +
                     ".exit / .quit        quit"
                 );
+                break;
+            case ".panic":
+                String corrupted = CorruptData.corrupt(catalog);
+                System.out.println(corrupted != null
+                    ? "\uD83D\uDCA5 PANIC! Goodbye Table '" + corrupted + "'"
+                    : "Nothing to panic about -- every table is empty.");
                 break;
             case ".tables":
                 if (catalog.isEmpty()) {
