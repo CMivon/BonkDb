@@ -1,6 +1,7 @@
+package Engine;
 
 import java.util.*;
-import "../Table"
+import Engine.Table;
 
 /**
  * Chaos-mode gimmick: picks a random table, a random row, and a random
