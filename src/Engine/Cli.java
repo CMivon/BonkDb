@@ -167,6 +167,7 @@ public class Cli {
                 );
                 break;
             case ".panic":
+		System.out.println(Art.panicWave());
                 String corrupted = CorruptData.corrupt(catalog);
                 System.out.println(corrupted != null
                     ? "\uD83D\uDCA5 PANIC! Goodbye Table '" + corrupted + "'"
