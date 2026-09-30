@@ -10,10 +10,11 @@ Why would I ever use BondDb? *BECAUSE* BonkDb can sprinkle a little magic into y
   - Create a truely* Random Order
 -  Immaculate  Vibes: ``SELECT chill FROM WhatATable WHERE vibes='Immaculate'``
     - Useless condition - always returns true. No Negative vibes here!  
-- Panic: ``PANIC``
-  - Will randomly corrupt and delete your data. Life would be too easy otherwise :)
-- Revenge: ``SELECT * FROM AngryTable ORDER BY name``
+- Panic: ``.PANIC`` (cli command)
+  - Will randomly corrupt your data. Life would be too easy otherwise :)
+- Revenge: ``SELECT * FROM revenge ORDER BY name``
   - Delete a folder from your BonkDb directory making you seek REVENGE!!!!!
+  - select from revenge table to trigger
   - *NOTE*: Use this at your own risk!
 ## Usage
 BonkDb works right out of the box. No need to install any third party libraries
