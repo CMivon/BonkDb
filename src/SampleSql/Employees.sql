@@ -1,0 +1,32 @@
+CREATE TABLE employees (id INT, label TEXT, department TEXT, salary DOUBLE, age INT);
+
+INSERT INTO employees VALUES (1, 'Employee01', 'Engineering', 95000, 29);
+INSERT INTO employees VALUES (2, 'Employee02', 'Sales', 68000, 34);
+INSERT INTO employees VALUES (3, 'Employee03', 'Engineering', 102000, 41);
+INSERT INTO employees VALUES (4, 'Employee04', 'Marketing', 71000, 27);
+INSERT INTO employees VALUES (5, 'Employee05', 'Support', 54000, 23);
+INSERT INTO employees VALUES (6, 'Employee06', 'Engineering', 88000, 31);
+INSERT INTO employees VALUES (7, 'Employee07', 'HR', 61000, 38);
+INSERT INTO employees VALUES (8, 'Employee08', 'Sales', 72000, 45);
+INSERT INTO employees VALUES (9, 'Employee09', 'Marketing', 69000, 26);
+INSERT INTO employees VALUES (10, 'Employee10', 'Support', 56000, 30);
+INSERT INTO employees VALUES (11, 'Employee11', 'Engineering', 110000, 36);
+INSERT INTO employees VALUES (12, 'Employee12', 'HR', 58000, 52);
+INSERT INTO employees VALUES (13, 'Employee13', 'Sales', 75000, 29);
+INSERT INTO employees VALUES (14, 'Employee14', 'Engineering', 91000, 33);
+INSERT INTO employees VALUES (15, 'Employee15', 'Marketing', 73000, 24);
+INSERT INTO employees VALUES (16, 'Employee16', 'Support', 59000, 28);
+INSERT INTO employees VALUES (17, 'Employee17', 'Engineering', 97000, 40);
+INSERT INTO employees VALUES (18, 'Employee18', 'HR', 63000, 35);
+INSERT INTO employees VALUES (19, 'Employee19', 'Sales', 70000, 31);
+INSERT INTO employees VALUES (20, 'Employee20', 'Marketing', 67000, 22);
+INSERT INTO employees VALUES (21, 'Employee21', 'Support', 55000, 48);
+INSERT INTO employees VALUES (22, 'Employee22', 'Engineering', 105000, 37);
+INSERT INTO employees VALUES (23, 'Employee23', 'HR', 60000, 44);
+INSERT INTO employees VALUES (24, 'Employee24', 'Sales', 78000, 26);
+INSERT INTO employees VALUES (25, 'Employee25', 'Marketing', 66000, 30);
+
+SELECT * FROM employees LIMIT 5;
+SELECT department, COUNT(*), AVG(salary) FROM employees GROUP BY department;
+SELECT * FROM employees ORDER BY salary DESC LIMIT 5;
+SELECT label, age FROM employees WHERE age < 28;

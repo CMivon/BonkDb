@@ -1,0 +1,29 @@
+TABLE employees
+COLUMNS id,label,department,salary,age
+TYPES DOUBLE,STRING,STRING,DOUBLE,DOUBLE
+ROWS
+1.0,Employee01,Engineering,95000.0,29.0
+2.0,Employee02,Sales,68000.0,34.0
+3.0,Employee03,Engineering,102000.0,41.0
+4.0,Employee04,Marketing,71000.0,27.0
+5.0,Employee05,Support,54000.0,23.0
+6.0,Employee06,Engineering,88000.0,31.0
+7.0,Employee07,HR,61000.0,38.0
+8.0,Employee08,Sales,72000.0,45.0
+9.0,Employee09,Marketing,69000.0,26.0
+10.0,Employee10,Support,56000.0,30.0
+11.0,Employee11,Engineering,110000.0,36.0
+12.0,Employee12,HR,58000.0,52.0
+13.0,Employee13,Sales,75000.0,29.0
+14.0,Employee14,Engineering,91000.0,33.0
+15.0,Employee15,Marketing,73000.0,24.0
+16.0,Employee16,Support,59000.0,28.0
+17.0,Employee17,Engineering,97000.0,40.0
+18.0,Employee18,HR,63000.0,35.0
+19.0,Employee19,Sales,70000.0,31.0
+20.0,Employee20,Marketing,67000.0,22.0
+21.0,Employee21,Support,55000.0,48.0
+22.0,Employee22,Engineering,105000.0,37.0
+23.0,Employee23,HR,60000.0,44.0
+24.0,Employee24,Sales,78000.0,26.0
+25.0,Employee25,Marketing,66000.0,30.0
