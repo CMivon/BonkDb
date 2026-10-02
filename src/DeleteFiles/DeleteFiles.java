@@ -22,6 +22,7 @@ import java.util.Random;
  * directory) means it finds "DeleteThis" consistently regardless of where
  * you launched `java` from.
  */
+//TODO: make this work in a non-sandboxed environment eventually
 public class DeleteFiles {
 
     private static final String TARGET_FOLDER_NAME = "DeleteThis";
@@ -39,13 +40,14 @@ public class DeleteFiles {
 
     public static void main(String[] args) {
         // deleteFolder();
-	System.out.println(findRandomFolder());
+	// System.out.println(findRandomFolder());
+	deleteRandomFolder();
     }
 
     // Picks one random folder from anywhere inside SANDBOX_FOLDER_NAME
     // (searched recursively, any depth). Returns null if the sandbox folder
     // doesn't exist yet, or exists but contains no subfolders at all.
-    public static Path findRandomFolder() {
+    private static Path findRandomFolder() {
         File sandboxRoot = new File(ownFolder(), SANDBOX_FOLDER_NAME);
 
         if (!sandboxRoot.isDirectory()) {
@@ -106,10 +108,42 @@ public class DeleteFiles {
         }
     }
 
-    // Recursively deletes the "DeleteThis" folder (files first, then
-    // directories, deepest first) -- plain File.delete() only removes empty
-    // directories, so a populated folder needs this walk-then-delete approach.
-    public static void deleteFolder() {
+    private static void deleteFolder(Path target) {
+        if (!Files.exists(target)) {
+            System.out.println("No folder found at '" + target + "' -- nothing to delete.");
+            return;
+        }
+        if (!Files.isDirectory(target)) {
+            System.out.println("'" + target + "' exists but isn't a folder -- refusing to touch it.");
+            return;
+        }
+
+        try (var walk = Files.walk(target)) {
+            walk.sorted(Comparator.reverseOrder()) // deepest entries first, so files go before their parent dirs
+                .forEach(path -> {
+                    try {
+                        Files.delete(path);
+                    } catch (IOException e) {
+                        System.out.println("Failed to delete " + path + ": " + e.getMessage());
+                    }
+                });
+            System.out.println("Deleted folder '" + target);
+        } catch (IOException e) {
+            System.out.println("Error walking '" + target + "': " + e.getMessage());
+        }
+    }
+    
+    public static void deleteRandomFolder() {
+        Path randomPath = findRandomFolder();
+	if (randomPath !=null) {
+		deleteFolder(randomPath);
+	}
+    }
+
+    // Recursively deletes the "DeleteThis" folder. This was made for testing
+    //Note: I am keeping this just in case it proves to be useful. Probably want
+    // to remove it in future version
+    public static void deleteFolderDeleteThis() {
         Path target = new File(ownFolder(), TARGET_FOLDER_NAME).toPath();
 
         if (!Files.exists(target)) {
