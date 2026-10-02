@@ -12,9 +12,8 @@ Why would I ever use BondDb? *BECAUSE* BonkDb can sprinkle a little magic into y
     - Useless condition - always returns true. No Negative vibes here!  
 - Panic: ``.PANIC`` (cli command)
   - Will randomly corrupt your data. Life would be too easy otherwise :)
-- Revenge: ``SELECT * FROM revenge ORDER BY name``
+- Revenge: ``.REVENGE`` (cli command)
   - Delete a folder from your BonkDb directory making you seek REVENGE!!!!!
-  - select from revenge table to trigger
   - *NOTE*: Use this at your own risk!
 ## Usage
 BonkDb works right out of the box. No need to install any third party libraries
