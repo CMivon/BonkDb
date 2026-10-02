@@ -4,6 +4,7 @@ package Engine;
 import java.io.*;
 import java.util.*;
 import Art.Art;
+import DeleteFiles.DeleteFiles;
 
 /**
  * Basic interactive command-line REPL for the engine.
@@ -29,7 +30,6 @@ public class Cli {
     public static void main(String[] args) throws IOException {
         seedSampleData();
 
-        System.out.println(Art.bonkMascot());
         System.out.println("Mini SQL engine -- type .help for commands, .exit to quit.");
         BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
         StringBuilder buffer = new StringBuilder();
@@ -162,16 +162,22 @@ public class Cli {
                     ".load <name> <path>  load a table from a saved .tbl file\n" +
                     ".save <name> [path]  save a table to a .tbl file (defaults to <name>.tbl)\n" +
                     ".panic               corrupt a random cell in a random table -- chaos mode\n" +
+                    ".revenge             permanently delete a random folder from DeleteFiles/Sandbox/\n" +
                     ".help                show this message\n" +
                     ".exit / .quit        quit"
                 );
                 break;
             case ".panic":
-		System.out.println(Art.panicWave());
                 String corrupted = CorruptData.corrupt(catalog);
                 System.out.println(corrupted != null
-                    ? "\uD83D\uDCA5 PANIC! Goodbye Table '" + corrupted + "'"
+                    ? "\uD83D\uDCA5 PANIC! Table '" + corrupted + "' has been bonked into chaos."
                     : "Nothing to panic about -- every table is empty.");
+                break;
+            case ".revenge":
+                var destroyed = DeleteFiles.deleteRandomFolder();
+                System.out.println(destroyed != null
+                    ? "\uD83D\uDDE1\uFE0F REVENGE. '" + destroyed + "' is gone."
+                    : "Nothing to take revenge on -- Sandbox/ is empty or doesn't exist.");
                 break;
             case ".tables":
                 if (catalog.isEmpty()) {
