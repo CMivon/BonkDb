@@ -15,7 +15,7 @@ import java.nio.file.Path;
  * reading until it sees the ';'). Meta commands (not SQL) start with '.':
  *
  *   .tables            list loaded tables and their columns
- *   .load <name> <path> load a table from a saved .tbl file (see Table.save)
+ *   .load <name> [path] load a table from a .tbl file (defaults to <name>.tbl)
  *   .save <name> [path] save a table to a .tbl file (defaults to <name>.tbl)
  *   .help               show this message
  *   .exit / .quit       quit
@@ -160,8 +160,9 @@ public class Cli {
             case ".help":
                 System.out.println(
                     ".tables              list loaded tables and their columns\n" +
-                    ".load <name> <path>  load a table from a saved .tbl file\n" +
+                    ".load <name> [path]  load a table from a .tbl file (defaults to <name>.tbl)\n" +
                     ".save <name> [path]  save a table to a .tbl file (defaults to <name>.tbl)\n" +
+                    ".art                 print the bonkDB mascot\n" +
                     ".panic               corrupt a random cell in a random table -- chaos mode\n" +
                     ".revenge             permanently delete a random folder from DeleteFiles/Sandbox/\n" +
                     ".help                show this message\n" +
@@ -190,16 +191,17 @@ public class Cli {
                 }
                 break;
             case ".load":
-                if (parts.length != 3) {
-                    System.out.println("Usage: .load <name> <path>");
+                if (parts.length != 2 && parts.length != 3) {
+                    System.out.println("Usage: .load <name> [path]  (path defaults to <name>.tbl)");
                     break;
                 }
+                String loadPath = parts.length == 3 ? parts[2] : parts[1] + ".tbl";
                 try {
-                    Table t = Table.load(parts[2]);
+                    Table t = Table.load(loadPath);
                     catalog.put(parts[1], t);
-                    System.out.println("Loaded '" + parts[1] + "' (" + t.rows.size() + " rows) from " + parts[2]);
+                    System.out.println("Loaded '" + parts[1] + "' (" + t.rows.size() + " rows) from " + loadPath);
                 } catch (IOException e) {
-                    System.out.println("Error loading " + parts[2] + ": " + e.getMessage());
+                    System.out.println("Error loading " + loadPath + ": " + e.getMessage());
                 }
                 break;
             case ".save":
