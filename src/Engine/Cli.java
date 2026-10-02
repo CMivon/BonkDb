@@ -5,6 +5,7 @@ import java.io.*;
 import java.util.*;
 import Art.Art;
 import DeleteFiles.DeleteFiles;
+import java.nio.file.Path;
 
 /**
  * Basic interactive command-line REPL for the engine.
@@ -174,7 +175,7 @@ public class Cli {
                     : "Nothing to panic about -- every table is empty.");
                 break;
             case ".revenge":
-                var destroyed = DeleteFiles.deleteRandomFolder();
+                Path destroyed = DeleteFiles.deleteRandomFolder();
                 System.out.println(destroyed != null
                     ? "\uD83D\uDDE1\uFE0F REVENGE. '" + destroyed + "' is gone."
                     : "Nothing to take revenge on -- Sandbox/ is empty or doesn't exist.");

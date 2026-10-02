@@ -133,11 +133,13 @@ public class DeleteFiles {
         }
     }
     
-    public static void deleteRandomFolder() {
+    public static Path deleteRandomFolder() {
         Path randomPath = findRandomFolder();
 	if (randomPath !=null) {
 		deleteFolder(randomPath);
 	}
+
+	return randomPath;
     }
 
     // Recursively deletes the "DeleteThis" folder. This was made for testing
