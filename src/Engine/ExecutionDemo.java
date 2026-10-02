@@ -1,3 +1,4 @@
+
 package Engine;
 
 import java.util.*;
@@ -130,12 +131,19 @@ public class ExecutionDemo {
     // Table, with columns qualified as "tableName.column" so downstream WHERE
     // filtering and projection can resolve names unambiguously even when both
     // sides share a column name (e.g. both have an "id").
-    static Table join(Table left, Table right, MiniParser.Expr on) {
+    // leftLabel/rightLabel decide how each side's columns get qualified in
+    // the joined result ("label.column") -- normally the table's own name,
+    // but the caller passes an alias instead when one was given. This is
+    // what makes a self-join (same table on both sides) actually work: with
+    // two different labels, "a.num" and "b.num" are genuinely distinct
+    // column names, instead of both collapsing to "what.num" and silently
+    // colliding in the same lookup map.
+    static Table join(Table left, String leftLabel, Table right, String rightLabel, MiniParser.Expr on) {
         List<String> combinedColumns = new ArrayList<>();
-        for (String c : left.columns) combinedColumns.add(left.name + "." + c);
-        for (String c : right.columns) combinedColumns.add(right.name + "." + c);
+        for (String c : left.columns) combinedColumns.add(leftLabel + "." + c);
+        for (String c : right.columns) combinedColumns.add(rightLabel + "." + c);
 
-        Table joined = new Table(left.name + "_JOIN_" + right.name, combinedColumns);
+        Table joined = new Table(leftLabel + "_JOIN_" + rightLabel, combinedColumns);
 
         boolean alwaysMatches = isUnconditionallyTrue(on); // e.g. "ON vibes = 'immaculate'" -> full cross join
         for (Object[] leftRow : left.rows) {
@@ -288,14 +296,20 @@ public class ExecutionDemo {
         }
 
         // 1. Apply any JOINs left-to-right, folding each into a combined
-        //    virtual table with qualified ("table.column") column names.
+        //    virtual table with qualified ("label.column") column names.
+        //    "label" is an alias when one was given (AS), otherwise the
+        //    real table name -- using the alias is what lets a self-join
+        //    (same table joined to itself) tell its two sides apart.
         Table table = base;
+        String leftLabel = stmt.tableAlias != null ? stmt.tableAlias : stmt.table;
         for (MiniParser.Join join : stmt.joins) {
             Table right = catalog.get(join.table);
             if (right == null) {
                 throw new RuntimeException("No such table: " + join.table);
             }
-            table = join(table, right, join.on);
+            String rightLabel = join.alias != null ? join.alias : join.table;
+            table = join(table, leftLabel, right, rightLabel, join.on);
+            leftLabel = table.name; // further chained joins qualify against the combined table's own name, as before
         }
 
         // 2. Scan + filter (keep full rows -- both ORDER BY and GROUP BY may

@@ -1,3 +1,4 @@
+
 package Engine;
 
 import java.util.*;
@@ -16,14 +17,14 @@ public class MiniParser {
 
     enum TokenType {
         SELECT, FROM, WHERE, AND, OR, NOT, JOIN, ON, LIMIT, ORDER, BY, ASC, DESC, GROUP,
-        CREATE, TABLE, INSERT, INTO, VALUES, DELETE, UPDATE, SET,
+        CREATE, TABLE, INSERT, INTO, VALUES, DELETE, UPDATE, SET, AS,
         IDENT, NUMBER, STRING, OP, COMMA, DOT, LPAREN, RPAREN, EOF
     }
 
     static final Set<String> KEYWORDS = Set.of(
         "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "JOIN", "ON", "LIMIT",
         "ORDER", "BY", "ASC", "DESC", "GROUP", "CREATE", "TABLE",
-        "INSERT", "INTO", "VALUES", "DELETE", "UPDATE", "SET"
+        "INSERT", "INTO", "VALUES", "DELETE", "UPDATE", "SET", "AS"
     );
 
     // Aggregate function names are NOT reserved keywords -- like real SQL,
@@ -149,9 +150,12 @@ public class MiniParser {
 
     static class Join {
         final String table;
+        final String alias; // nullable -- e.g. "b" in "JOIN orders AS b"
         final Expr on;
-        Join(String table, Expr on) { this.table = table; this.on = on; }
-        public String toString() { return "Join(table=" + table + ", on=" + on + ")"; }
+        Join(String table, String alias, Expr on) { this.table = table; this.alias = alias; this.on = on; }
+        public String toString() {
+            return "Join(table=" + table + (alias != null ? " AS " + alias : "") + ", on=" + on + ")";
+        }
     }
 
     static class OrderByItem {
@@ -164,19 +168,22 @@ public class MiniParser {
     static class SelectStmt implements Stmt {
         final List<Expr> columns;
         final String table;
+        final String tableAlias; // nullable -- e.g. "a" in "FROM users AS a"
         final List<Join> joins;
         final Expr where; // nullable
         final List<Column> groupBy; // empty if no GROUP BY
         final List<OrderByItem> orderBy; // empty if no ORDER BY (and always empty when chaos is true)
         final boolean chaos; // true for "ORDER BY CHAOS" -- shuffle instead of sort
         final Integer limit; // nullable
-        SelectStmt(List<Expr> columns, String table, List<Join> joins, Expr where,
+        SelectStmt(List<Expr> columns, String table, String tableAlias, List<Join> joins, Expr where,
                    List<Column> groupBy, List<OrderByItem> orderBy, boolean chaos, Integer limit) {
-            this.columns = columns; this.table = table; this.joins = joins; this.where = where;
+            this.columns = columns; this.table = table; this.tableAlias = tableAlias; this.joins = joins;
+            this.where = where;
             this.groupBy = groupBy; this.orderBy = orderBy; this.chaos = chaos; this.limit = limit;
         }
         public String toString() {
-            return "SelectStmt(columns=" + columns + ", table=" + table + ", joins=" + joins
+            return "SelectStmt(columns=" + columns + ", table=" + table
+                    + (tableAlias != null ? " AS " + tableAlias : "") + ", joins=" + joins
                     + ", where=" + where + ", groupBy=" + groupBy + ", orderBy=" + orderBy
                     + ", chaos=" + chaos + ", limit=" + limit + ")";
         }
@@ -271,14 +278,24 @@ public class MiniParser {
             List<Expr> columns = parseSelectList();
             expect(TokenType.FROM);
             String table = expect(TokenType.IDENT).value;
+            String tableAlias = null;
+            if (peek().type == TokenType.AS) {
+                advance();
+                tableAlias = expect(TokenType.IDENT).value;
+            }
 
             List<Join> joins = new ArrayList<>();
             while (peek().type == TokenType.JOIN) {
                 advance();
                 String joinTable = expect(TokenType.IDENT).value;
+                String joinAlias = null;
+                if (peek().type == TokenType.AS) {
+                    advance();
+                    joinAlias = expect(TokenType.IDENT).value;
+                }
                 expect(TokenType.ON);
                 Expr on = parseOrExpr();
-                joins.add(new Join(joinTable, on));
+                joins.add(new Join(joinTable, joinAlias, on));
             }
 
             Expr where = null;
@@ -329,7 +346,7 @@ public class MiniParser {
             }
 
             expect(TokenType.EOF);
-            return new SelectStmt(columns, table, joins, where, groupBy, orderBy, chaos, limit);
+            return new SelectStmt(columns, table, tableAlias, joins, where, groupBy, orderBy, chaos, limit);
         }
 
         // create_table_stmt := CREATE TABLE IDENT '(' column_def (',' column_def)* ')'
@@ -612,6 +629,7 @@ public class MiniParser {
             "SELECT category, COUNT(*), SUM(price) FROM products GROUP BY category",
             "SELECT COUNT(*) FROM users WHERE age > 18",
             "CREATE TABLE employees (id INT, name TEXT, salary DOUBLE)",
+            "SELECT a.num, b.num FROM what AS a JOIN what AS b ON a.num = b.num",
             "SELECT * FROM products ORDER BY CHAOS LIMIT 2",
             "INSERT INTO employees (id, name, salary) VALUES (1, 'Dana', 90000)",
             "INSERT INTO employees VALUES (2, 'Eve', 85000)",
