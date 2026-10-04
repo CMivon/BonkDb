@@ -75,16 +75,25 @@ public abstract class Table {
     abstract int deleteWhere(Predicate<Object[]> matches);
 
     // Replaces every row for which matches returns true with change.apply(row),
-    // keeping its position, and returns how many were replaced. change must
-    // return a new array (it is given a row it must not modify). Both functions
-    // are applied to every selected row before any row is replaced, so if
-    // either throws, the table is left exactly as it was. No type checking
-    // is done on the new rows: that is the caller's job (see executeUpdate).
+    // and returns how many were replaced. change must return a new array (it is
+    // given a row it must not modify). Both functions are applied to every
+    // selected row before any row is replaced, so if either throws, the table
+    // is left exactly as it was. A table in memory keeps each row's position;
+    // a table stored in a file does too unless a grown row no longer fits where
+    // it was, in which case it moves. Whether a new row's values are checked
+    // against the column types depends on the kind of table: a MemoryTable
+    // doesn't check (the caller does, see executeUpdate); a HeapTable refuses
+    // a row its file can't hold, and in that case changes nothing.
     abstract int updateWhere(Predicate<Object[]> matches, UnaryOperator<Object[]> change);
 
     // Stores a row that insert() has already validated. Implementations must
     // not keep the caller's array.
     abstract void store(Object[] values);
+
+    // Releases whatever the table holds open (a file, for a stored table).
+    // Does nothing for a table in memory.
+    void close() throws IOException {
+    }
 
     final void insert(Object... values) {
         if (values.length != columns.size()) {

@@ -173,6 +173,11 @@ public class ExecutionDemo {
     // it in the catalog. Unlike executeSelect, there's no result set to
     // return -- callers just check for a thrown exception.
     static void executeCreateTable(MiniParser.CreateTableStmt stmt, Map<String, Table> catalog) {
+        executeCreateTable(stmt, catalog, (name, columns, types) -> new MemoryTable(name, columns, types));
+    }
+
+    // The same, but the caller chooses what kind of table gets made.
+    static void executeCreateTable(MiniParser.CreateTableStmt stmt, Map<String, Table> catalog, TableFactory factory) {
         if (catalog.containsKey(stmt.table)) {
             throw new RuntimeException("Table already exists: " + stmt.table);
         }
@@ -182,7 +187,7 @@ public class ExecutionDemo {
             columnNames.add(cd.name);
             types.add(cd.type);
         }
-        catalog.put(stmt.table, new MemoryTable(stmt.table, columnNames, types));
+        catalog.put(stmt.table, factory.create(stmt.table, columnNames, types));
     }
 
     // Inserts one row. Delegates the actual insert (and its type validation

@@ -57,6 +57,13 @@ public class DataChangeTests {
         db.assertRows("SELECT * FROM people");
         assertEquals(0, db.count("people"), "a new table has no rows");
 
+        // Guard against the test pass quietly using the wrong kind of table.
+        if (TestDb.usingFileTables()) {
+            assertTrue(db.catalog.get("people") instanceof HeapTable, "in file mode, CREATE TABLE makes a file-backed table");
+        } else {
+            assertTrue(db.catalog.get("people") instanceof MemoryTable, "normally, CREATE TABLE makes an in-memory table");
+        }
+
         db.expectError("CREATE TABLE people (x INT)", "Table already exists: people");
         // The failed CREATE didn't disturb the original.
         db.assertColumns("SELECT * FROM people", "id", "name", "score");
@@ -375,6 +382,12 @@ public class DataChangeTests {
     // CorruptData picks a random non-empty table, a random cell, and appends
     // "TEST" to it, whatever the cell's type. This test pins that behavior.
     static void corruptData() throws Exception {
+        if (TestDb.usingFileTables()) {
+            // CorruptData appends text to a cell whatever its type, which a file-backed
+            // table refuses (see HeapTableTests). Its behavior is pinned on in-memory tables.
+            System.out.println("      (skipped: CorruptData only works on in-memory tables)");
+            return;
+        }
         // Nothing to corrupt: no tables at all, or only empty ones.
         TestDb none = new TestDb();
         assertEquals(null, CorruptData.corrupt(none.catalog), "empty catalog");
@@ -453,6 +466,12 @@ public class DataChangeTests {
     // should be refused. When that's fixed, expect an error from CREATE.
     static void bugDuplicateColumns() {
         TestDb db = new TestDb();
+        if (TestDb.usingFileTables()) {
+            // A file can't describe a repeated column name, so a file-backed table
+            // refuses what an in-memory table silently accepts.
+            db.expectError("CREATE TABLE dup (a INT, a TEXT)", "Duplicate column name: a");
+            return;
+        }
         assertEquals(0, db.exec("CREATE TABLE dup (a INT, a TEXT)"), "the duplicate name is accepted");
         db.exec("INSERT INTO dup VALUES (1, 'x')");
         db.assertRows("SELECT * FROM dup", r("x", "x"));

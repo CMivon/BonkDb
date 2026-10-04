@@ -18,6 +18,9 @@ final class TestKit {
         void run() throws Exception;
     }
 
+    // Printed before every test name. Lets a second run of the same tests be told apart.
+    static String prefix = "";
+
     private static int passed = 0;
     private static int failed = 0;
 
@@ -27,10 +30,10 @@ final class TestKit {
         try {
             check.run();
             passed++;
-            System.out.println("PASS  " + name);
+            System.out.println("PASS  " + prefix + name);
         } catch (Throwable t) {
             failed++;
-            System.out.println("FAIL  " + name + "  ->  " + t);
+            System.out.println("FAIL  " + prefix + name + "  ->  " + t);
             for (StackTraceElement frame : t.getStackTrace()) {
                 if (frame.getClassName().startsWith("Engine.") && !frame.getClassName().equals("Engine.TestKit")) {
                     System.out.println("        at " + frame);
