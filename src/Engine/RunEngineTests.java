@@ -11,6 +11,7 @@ public class RunEngineTests {
         QueryTests.runAll();
         DataChangeTests.runAll();
         TableTests.runAll();
+        TableContractTests.runAll();
         CliTests.runAll();
         TestKit.finish();
     }
