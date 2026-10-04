@@ -1,4 +1,3 @@
-
 package Engine;
 
 import java.io.*;
@@ -163,17 +162,17 @@ public class Cli {
                     ".load <name> [path]  load a table from a .tbl file (defaults to <name>.tbl)\n" +
                     ".save <name> [path]  save a table to a .tbl file (defaults to <name>.tbl)\n" +
                     ".art                 print the bonkDB mascot\n" +
-                    ".panic               corrupt a random cell in a random table -- chaos mode\n" +
+                    ".panic               (future upgrade -- not available yet)\n" +
                     ".revenge             permanently delete a random folder from DeleteFiles/Sandbox/\n" +
                     ".help                show this message\n" +
                     ".exit / .quit        quit"
                 );
                 break;
             case ".panic":
-                String corrupted = CorruptData.corrupt(catalog);
-                System.out.println(corrupted != null
-                    ? "\uD83D\uDCA5 PANIC! Table '" + corrupted + "' has been bonked into chaos."
-                    : "Nothing to panic about -- every table is empty.");
+                // Parked for now. CorruptData still exists, but it can't corrupt a
+                // table whose columns have fixed types, so what .panic should do
+                // once tables are stored in files is still to be decided.
+                System.out.println("Future upgrade");
                 break;
             case ".revenge":
                 Path destroyed = DeleteFiles.deleteRandomFolder();
@@ -199,7 +198,7 @@ public class Cli {
                 try {
                     Table t = Table.load(loadPath);
                     catalog.put(parts[1], t);
-                    System.out.println("Loaded '" + parts[1] + "' (" + t.rows.size() + " rows) from " + loadPath);
+                    System.out.println("Loaded '" + parts[1] + "' (" + t.rowCount() + " rows) from " + loadPath);
                 } catch (IOException e) {
                     System.out.println("Error loading " + loadPath + ": " + e.getMessage());
                 }
@@ -228,19 +227,19 @@ public class Cli {
     }
 
     static void seedSampleData() {
-        Table users = new Table("users", List.of("id", "name", "age"));
+        Table users = new MemoryTable("users", List.of("id", "name", "age"));
         users.insert(1.0, "Alice", 30.0);
         users.insert(2.0, "Bob", 17.0);
         users.insert(3.0, "Carol", 45.0);
         catalog.put("users", users);
 
-        Table products = new Table("products", List.of("name", "price", "category"));
+        Table products = new MemoryTable("products", List.of("name", "price", "category"));
         products.insert("Hammer", 25.0, "tools");
         products.insert("Wrench", 150.0, "tools");
         products.insert("Paint", 40.0, "supplies");
         catalog.put("products", products);
 
-        Table orders = new Table("orders", List.of("id", "user_id", "total"));
+        Table orders = new MemoryTable("orders", List.of("id", "user_id", "total"));
         orders.insert(100.0, 1.0, 75.0);
         orders.insert(101.0, 1.0, 20.0);
         orders.insert(102.0, 3.0, 60.0);

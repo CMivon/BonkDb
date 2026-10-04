@@ -1,4 +1,3 @@
-
 package Engine;
 
 import java.util.*;
@@ -143,17 +142,25 @@ public class ExecutionDemo {
         for (String c : left.columns) combinedColumns.add(leftLabel + "." + c);
         for (String c : right.columns) combinedColumns.add(rightLabel + "." + c);
 
-        Table joined = new Table(leftLabel + "_JOIN_" + rightLabel, combinedColumns);
+        MemoryTable joined = new MemoryTable(leftLabel + "_JOIN_" + rightLabel, combinedColumns);
 
-        boolean alwaysMatches = isUnconditionallyTrue(on); // e.g. "ON vibes = 'immaculate'" -> full cross join
-        for (Object[] leftRow : left.rows) {
-            for (Object[] rightRow : right.rows) {
+        // Read the right-hand side once, up front, rather than once per left
+        // row. For an in-memory table that makes no difference, but for a table
+        // stored on disk it is the difference between one read and thousands.
+        List<Object[]> rightRows = new ArrayList<>();
+        for (Object[] rightRow : right.scan()) {
+            rightRows.add(rightRow);
+        }
+
+        boolean alwaysMatches = isUnconditionallyTrue(on); // e.g. "ON vibes = 'imm' -> full cross join
+        for (Object[] leftRow : left.scan()) {
+            for (Object[] rightRow : rightRows) {
                 Object[] combinedRow = new Object[leftRow.length + rightRow.length];
                 System.arraycopy(leftRow, 0, combinedRow, 0, leftRow.length);
                 System.arraycopy(rightRow, 0, combinedRow, leftRow.length, rightRow.length);
 
                 if (alwaysMatches || asBool(evaluate(on, joined, combinedRow))) {
-                    joined.rows.add(combinedRow);
+                    joined.append(combinedRow);
                 }
             }
         }
@@ -175,7 +182,7 @@ public class ExecutionDemo {
             columnNames.add(cd.name);
             types.add(cd.type);
         }
-        catalog.put(stmt.table, new Table(stmt.table, columnNames, types));
+        catalog.put(stmt.table, new MemoryTable(stmt.table, columnNames, types));
     }
 
     // Inserts one row. Delegates the actual insert (and its type validation
@@ -229,20 +236,8 @@ public class ExecutionDemo {
             throw new RuntimeException("No such table: " + stmt.table);
         }
 
-        List<Object[]> kept = new ArrayList<>();
-        int deletedCount = 0;
         boolean alwaysMatches = isUnconditionallyTrue(stmt.where); // e.g. WHERE vibes = 'immaculate' -> deletes everything
-        for (Object[] row : table.rows) {
-            boolean matches = alwaysMatches || asBool(evaluate(stmt.where, table, row));
-            if (matches) {
-                deletedCount++;
-            } else {
-                kept.add(row);
-            }
-        }
-        table.rows.clear();
-        table.rows.addAll(kept);
-        return deletedCount;
+        return table.deleteWhere(row -> alwaysMatches || asBool(evaluate(stmt.where, table, row)));
     }
 
     // Updates matching rows (or every row, if WHERE is absent) in place and
@@ -274,17 +269,16 @@ public class ExecutionDemo {
             newValues.add(value);
         }
 
-        int updatedCount = 0;
         boolean alwaysMatches = isUnconditionallyTrue(stmt.where); // e.g. WHERE vibes = 'immaculate' -> updates everything
-        for (Object[] row : table.rows) {
-            if (alwaysMatches || asBool(evaluate(stmt.where, table, row))) {
+        return table.updateWhere(
+            row -> alwaysMatches || asBool(evaluate(stmt.where, table, row)),
+            row -> {
+                Object[] changed = row.clone(); // never modify the stored row itself
                 for (int i = 0; i < indices.size(); i++) {
-                    row[indices.get(i)] = newValues.get(i);
+                    changed[indices.get(i)] = newValues.get(i);
                 }
-                updatedCount++;
-            }
-        }
-        return updatedCount;
+                return changed;
+            });
     }
 
     // ---------- Select executor ----------
@@ -317,7 +311,7 @@ public class ExecutionDemo {
         //    project yet)
         List<Object[]> filtered = new ArrayList<>();
         boolean alwaysMatches = isUnconditionallyTrue(stmt.where); // e.g. WHERE vibes = 'immaculate' -> every row matches
-        for (Object[] row : table.rows) {
+        for (Object[] row : table.scan()) {
             if (alwaysMatches || asBool(evaluate(stmt.where, table, row))) {
                 filtered.add(row);
             }

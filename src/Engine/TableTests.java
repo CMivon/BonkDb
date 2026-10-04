@@ -13,8 +13,8 @@ import java.util.List;
 import java.util.stream.Stream;
 
 /**
- * Tests for the Table class itself, and for its text-file format
- * (Table.save and Table.load). Unlike the SQL-level tests, these look
+ * Tests for MemoryTable (the in-memory kind of table) and for the text-file
+ * format shared by all tables (Table.save and Table.load). Unlike the SQL-level tests, these look
  * directly at the table's fields, so they describe the in-memory
  * implementation and will need rewriting when that changes. The file format
  * tests matter beyond that: existing .tbl files on disk depend on it.
@@ -43,6 +43,7 @@ public class TableTests {
             run("table: construction", TableTests::construction);
             run("table: inserting rows", TableTests::inserting);
             run("table: finding columns", TableTests::findingColumns);
+            run("memory table: how it stores rows", TableTests::memoryTableStorage);
             run("file: the exact format", TableTests::fileFormat);
             run("file: round trip of ordinary data", TableTests::roundTrip);
             run("file: awkward strings survive a round trip", TableTests::awkwardStrings);
@@ -77,9 +78,9 @@ public class TableTests {
     }
 
     // Saves the table, loads it back, and checks every row matches.
-    private static Table roundTrip(Table table, String file) throws IOException {
+    private static MemoryTable roundTrip(MemoryTable table, String file) throws IOException {
         table.save(file);
-        Table back = Table.load(file);
+        MemoryTable back = Table.load(file);
         assertEquals(table.name, back.name, "table name");
         assertEquals(table.columns, back.columns, "column names");
         assertEquals(table.rows.size(), back.rows.size(), "row count");
@@ -90,24 +91,24 @@ public class TableTests {
         return back;
     }
 
-    // ---------- Table ----------
+    // ---------- MemoryTable ----------
 
     static void construction() {
-        Table t = new Table("t", List.of("a", "b"), List.of("DOUBLE", "STRING"));
+        MemoryTable t = new MemoryTable("t", List.of("a", "b"), List.of("DOUBLE", "STRING"));
         assertEquals("t", t.name, "name");
         assertEquals(List.of("a", "b"), t.columns, "columns");
         assertEquals(List.of("DOUBLE", "STRING"), t.types, "types");
         assertTrue(t.rows.isEmpty(), "starts empty");
 
-        assertEquals(null, new Table("u", List.of("a")).types, "no types given means no declared schema");
+        assertEquals(null, new MemoryTable("u", List.of("a")).types, "no types given means no declared schema");
         expectThrows(RuntimeException.class,
-            () -> new Table("bad", List.of("a", "b"), List.of("DOUBLE")), "fewer types than columns");
+            () -> new MemoryTable("bad", List.of("a", "b"), List.of("DOUBLE")), "fewer types than columns");
         expectThrows(RuntimeException.class,
-            () -> new Table("bad", List.of("a"), List.of("DOUBLE", "STRING")), "more types than columns");
+            () -> new MemoryTable("bad", List.of("a"), List.of("DOUBLE", "STRING")), "more types than columns");
     }
 
     static void inserting() {
-        Table typed = new Table("t", List.of("n", "s"), List.of("DOUBLE", "STRING"));
+        MemoryTable typed = new MemoryTable("t", List.of("n", "s"), List.of("DOUBLE", "STRING"));
         typed.insert(1.5, "x");
         assertEquals(1, typed.rows.size(), "one row");
         assertTrue(Arrays.equals(new Object[] { 1.5, "x" }, typed.rows.get(0)), "row contents");
@@ -135,15 +136,44 @@ public class TableTests {
         assertEquals(1, typed.rows.size(), "refused inserts add nothing");
 
         // A table with no declared types checks nothing but the number of values.
-        Table untyped = new Table("u", List.of("a", "b"));
+        MemoryTable untyped = new MemoryTable("u", List.of("a", "b"));
         untyped.insert("anything", 42);
         untyped.insert(null, 1.5);
         assertEquals(2, untyped.rows.size(), "an untyped table accepts any values");
         expectThrows(RuntimeException.class, () -> untyped.insert(1), "but still the right count");
     }
 
+    // What is specific to the in-memory kind of table. (What every table must do is
+    // in TableContractTests.)
+    static void memoryTableStorage() {
+        MemoryTable t = new MemoryTable("t", List.of("a"), List.of("DOUBLE"));
+
+        Object[] mine = { 1.0 };
+        t.insert(mine);
+        assertTrue(t.rows.get(0) != mine, "insert stores a copy, not the caller's array");
+
+        // append() is the unchecked, no-copy way in, used for building result tables and loading files.
+        Object[] owned = { 2.0 };
+        t.append(owned);
+        assertTrue(t.rows.get(1) == owned, "append keeps the very array it is given");
+        t.append(new Object[] { "not a number", "and too many values" });
+        assertEquals(3, t.rowCount(), "append does no validation at all");
+
+        // scan() hands out the live storage, with no copying.
+        assertTrue(t.scan() == t.rows, "scan returns the stored list itself");
+        for (Object[] row : t.scan()) {
+            assertTrue(row == t.rows.get(0) || row == t.rows.get(1) || row == t.rows.get(2), "and the stored arrays");
+        }
+        // That is why changing a table while scanning it is refused rather than allowed to go wrong.
+        expectThrows(java.util.ConcurrentModificationException.class, () -> {
+            for (Object[] row : t.scan()) {
+                t.insert(5.0);
+            }
+        }, "inserting during a scan");
+    }
+
     static void findingColumns() {
-        Table t = new Table("users", List.of("id", "name"));
+        MemoryTable t = new MemoryTable("users", List.of("id", "name"));
         assertEquals(0, t.indexOf("id"), "indexOf");
         assertEquals(1, t.indexOf("name"), "indexOf");
         try {
@@ -160,7 +190,7 @@ public class TableTests {
         expectThrows(RuntimeException.class, () -> t.indexOfColumn(col("users", "nope")), "known qualifier, unknown column");
 
         // A joined table names its columns "label.column", and those are matched in full.
-        Table joined = new Table("a_JOIN_b", List.of("a.id", "b.id"));
+        MemoryTable joined = new MemoryTable("a_JOIN_b", List.of("a.id", "b.id"));
         assertEquals(0, joined.indexOfColumn(col("a", "id")), "first joined column");
         assertEquals(1, joined.indexOfColumn(col("b", "id")), "second joined column");
         expectThrows(RuntimeException.class, () -> joined.indexOfColumn(col("id")), "no unqualified match in a join");
@@ -170,7 +200,7 @@ public class TableTests {
     // ---------- File format ----------
 
     static void fileFormat() throws IOException {
-        Table t = new Table("users", List.of("name", "age"), List.of("STRING", "DOUBLE"));
+        MemoryTable t = new MemoryTable("users", List.of("name", "age"), List.of("STRING", "DOUBLE"));
         t.insert("Alice", 30.0);
         t.insert("Bob", 17.0);
         String file = path("format.tbl");
@@ -182,7 +212,7 @@ public class TableTests {
 
         // A hand-written file in that layout loads.
         Files.writeString(java.nio.file.Paths.get(file), "TABLE pets\nCOLUMNS kind,legs\nTYPES STRING,DOUBLE\nROWS\ncat,4.0\nbird,2.0\n");
-        Table loaded = Table.load(file);
+        MemoryTable loaded = Table.load(file);
         assertEquals("pets", loaded.name, "name comes from the file");
         assertEquals(List.of("kind", "legs"), loaded.columns, "columns");
         assertEquals(List.of("STRING", "DOUBLE"), loaded.types, "types");
@@ -195,11 +225,11 @@ public class TableTests {
     }
 
     static void roundTrip() throws IOException {
-        Table t = new Table("people", List.of("id", "name", "score"), List.of("DOUBLE", "STRING", "DOUBLE"));
+        MemoryTable t = new MemoryTable("people", List.of("id", "name", "score"), List.of("DOUBLE", "STRING", "DOUBLE"));
         for (int i = 0; i < 250; i++) {
             t.insert((double) i, "person" + i, i * 1.25);
         }
-        Table back = roundTrip(t, path("people.tbl"));
+        MemoryTable back = roundTrip(t, path("people.tbl"));
         assertEquals(List.of("DOUBLE", "STRING", "DOUBLE"), back.types, "types after reload");
         // Saving again overwrites rather than appends.
         t.insert(1000.0, "late", 1.0);
@@ -214,14 +244,14 @@ public class TableTests {
             "", "null", "NULL", "TABLE x", "COLUMNS a,b", "ROWS", "caf\u00e9 \u65e5\u672c \uD83D\uDE00", "comma, and\nnewline\\ together"
         };
         // A second column keeps every line non-empty (see the one-column bug below).
-        Table t = new Table("weird", List.of("txt", "n"), List.of("STRING", "DOUBLE"));
+        MemoryTable t = new MemoryTable("weird", List.of("txt", "n"), List.of("STRING", "DOUBLE"));
         for (int i = 0; i < tricky.length; i++) {
             t.insert(tricky[i], (double) i);
         }
         roundTrip(t, path("weird.tbl"));
 
         // Strings in other positions, and several awkward columns at once.
-        Table wide = new Table("wide", List.of("a", "b", "c"), List.of("STRING", "STRING", "STRING"));
+        MemoryTable wide = new MemoryTable("wide", List.of("a", "b", "c"), List.of("STRING", "STRING", "STRING"));
         wide.insert("x,y", "p\nq", "r\\s");
         wide.insert("", "", "");
         wide.insert(",", ",", ",");
@@ -229,7 +259,7 @@ public class TableTests {
     }
 
     static void awkwardNumbers() throws IOException {
-        Table t = new Table("nums", List.of("label", "n"), List.of("STRING", "DOUBLE"));
+        MemoryTable t = new MemoryTable("nums", List.of("label", "n"), List.of("STRING", "DOUBLE"));
         double[] values = { 0.0, -0.0, 1.0, -1.0, 0.1, 1.0 / 3, 123456789.987654321, 1e-9, 1e21, Double.MAX_VALUE,
             Double.MIN_VALUE, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, 4.9e-324 };
         for (int i = 0; i < values.length; i++) {
@@ -240,38 +270,38 @@ public class TableTests {
 
     static void typesPreserved() throws IOException {
         // A table with declared types keeps them, including when it has no rows.
-        Table empty = new Table("e", List.of("a", "b"), List.of("DOUBLE", "STRING"));
-        Table back = roundTrip(empty, path("empty.tbl"));
+        MemoryTable empty = new MemoryTable("e", List.of("a", "b"), List.of("DOUBLE", "STRING"));
+        MemoryTable back = roundTrip(empty, path("empty.tbl"));
         assertEquals(List.of("DOUBLE", "STRING"), back.types, "types of an empty table");
         // ...which means the reloaded table still checks what it's given.
         expectThrows(RuntimeException.class, () -> back.insert("text", "x"), "reloaded typed table refuses a bad value");
         back.insert(1.0, "ok");
 
-        Table allText = new Table("t", List.of("a", "b"), List.of("STRING", "STRING"));
+        MemoryTable allText = new MemoryTable("t", List.of("a", "b"), List.of("STRING", "STRING"));
         allText.insert("1", "2"); // digits that are text must stay text
-        Table backText = roundTrip(allText, path("text.tbl"));
+        MemoryTable backText = roundTrip(allText, path("text.tbl"));
         assertEquals("1", backText.rows.get(0)[0], "numeric-looking text stays text");
     }
 
     static void loadMissing() {
         expectThrows(FileNotFoundException.class, () -> Table.load(path("no-such-file.tbl")), "missing file");
-        expectThrows(IOException.class, () -> new Table("t", List.of("a")).save(path("no-such-dir/file.tbl")),
+        expectThrows(IOException.class, () -> new MemoryTable("t", List.of("a")).save(path("no-such-dir/file.tbl")),
             "saving into a folder that doesn't exist");
     }
 
     // ---------- Quirks and bugs ----------
 
-    // A Table built without declared types (the CLI's sample tables are made
-    // this way) has no schema, so Table.save guesses each column's type from
+    // A MemoryTable built without declared types (the CLI's sample tables are made
+    // this way) has no schema, so MemoryTable.save guesses each column's type from
     // its first row, and calls everything text if there are no rows. The
     // reloaded table is then typed, which it wasn't before.
     static void quirkUntypedTables() throws IOException {
-        Table untyped = new Table("u", List.of("n", "s"));
+        MemoryTable untyped = new MemoryTable("u", List.of("n", "s"));
         untyped.insert(1.5, "x");
-        Table back = roundTrip(untyped, path("untyped.tbl"));
+        MemoryTable back = roundTrip(untyped, path("untyped.tbl"));
         assertEquals(List.of("DOUBLE", "STRING"), back.types, "types guessed from the first row");
 
-        Table emptyUntyped = new Table("eu", List.of("n", "s"));
+        MemoryTable emptyUntyped = new MemoryTable("eu", List.of("n", "s"));
         emptyUntyped.save(path("emptyuntyped.tbl"));
         assertEquals(List.of("STRING", "STRING"), Table.load(path("emptyuntyped.tbl")).types,
             "with no rows to look at, every column is guessed to be text");
@@ -283,12 +313,12 @@ public class TableTests {
     // first row comes back as a one-value row, followed by two more).
     // When this is fixed, a round trip should return exactly the rows written.
     static void bugCarriageReturn() throws IOException {
-        Table t = new Table("cr", List.of("s", "n"), List.of("STRING", "DOUBLE"));
+        MemoryTable t = new MemoryTable("cr", List.of("s", "n"), List.of("STRING", "DOUBLE"));
         t.insert("a\rb", 1.0);
         t.insert("next", 2.0);
         String file = path("cr.tbl");
         t.save(file);
-        Table back = Table.load(file);
+        MemoryTable back = Table.load(file);
         assertEquals(3, back.rows.size(), "two rows were written but three come back");
         assertEquals(1, back.rows.get(0).length, "the first 'row' has only one value");
         assertEquals("a", back.rows.get(0)[0], "it holds the text before the carriage return");
@@ -299,14 +329,14 @@ public class TableTests {
     // silently lost. (With two or more columns the line isn't blank, so this
     // doesn't happen.) When this is fixed, all three rows should come back.
     static void bugEmptyOnlyColumn() throws IOException {
-        Table t = new Table("one", List.of("s"), List.of("STRING"));
+        MemoryTable t = new MemoryTable("one", List.of("s"), List.of("STRING"));
         t.insert("first");
         t.insert("");
         t.insert("third");
         String file = path("one.tbl");
         t.save(file);
         assertEquals("TABLE one\nCOLUMNS s\nTYPES STRING\nROWS\nfirst\n\nthird\n", read(file), "the file has a blank line");
-        Table back = Table.load(file);
+        MemoryTable back = Table.load(file);
         assertEquals(2, back.rows.size(), "three rows were written but two come back");
         assertEquals("first", back.rows.get(0)[0], "first row survives");
         assertEquals("third", back.rows.get(1)[0], "third row survives");

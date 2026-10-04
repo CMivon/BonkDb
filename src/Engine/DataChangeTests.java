@@ -42,6 +42,7 @@ public class DataChangeTests {
         run("delete: a refused delete changes nothing", DataChangeTests::deleteErrors);
         run("changes: tables are independent of each other", DataChangeTests::tablesAreIndependent);
         run("changes: a long sequence of mixed statements", DataChangeTests::lifecycle);
+        run("changes: a WHERE that fails partway changes nothing", DataChangeTests::changesAreAllOrNothing);
         run("vibes: also overrides UPDATE and DELETE conditions", DataChangeTests::vibesInChanges);
         run("gimmick: CorruptData", DataChangeTests::corruptData);
         run("KNOWN BUG: duplicate column names are accepted", DataChangeTests::bugDuplicateColumns);
@@ -328,6 +329,31 @@ public class DataChangeTests {
         db.assertRows("SELECT label FROM log WHERE seq = 1000", r("late"));
         assertEquals(expected.size() + 1, db.exec("DELETE FROM log"), "delete everything");
         assertEquals(0, db.count("log"), "empty at the end");
+    }
+
+    // A table with no declared types can hold mixed values, so a WHERE can work
+    // on the first rows and then fail on a later one. The statement must then
+    // change nothing at all. (UPDATE used to leave the earlier rows changed.)
+    static void changesAreAllOrNothing() {
+        TestDb db = new TestDb();
+        MemoryTable mixed = new MemoryTable("mixed", List.of("n"));
+        mixed.insert(1.0);
+        mixed.insert(2.0);
+        mixed.insert("text");
+        mixed.insert(4.0);
+        db.catalog.put("mixed", mixed);
+
+        // n > 0 is fine for the numbers but fails on "text".
+        db.expectError("UPDATE mixed SET n = 0 WHERE n > 0", "Type mismatch");
+        db.assertRows("SELECT n FROM mixed", r(1.0), r(2.0), r("text"), r(4.0));
+        db.expectError("DELETE FROM mixed WHERE n > 0", "Type mismatch");
+        db.assertRows("SELECT n FROM mixed", r(1.0), r(2.0), r("text"), r(4.0));
+
+        // A WHERE that doesn't depend on the mixed column can be evaluated for every row,
+        // so the change goes through. (Any comparison on the column itself fails on
+        // either the numbers or the text.)
+        assertEquals(4, db.exec("UPDATE mixed SET n = 0 WHERE 1 = 1"), "update every row");
+        db.assertRows("SELECT n FROM mixed", r(0.0), r(0.0), r(0.0), r(0.0));
     }
 
     static void vibesInChanges() {
