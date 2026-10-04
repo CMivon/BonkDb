@@ -104,6 +104,14 @@ public class Page {
         return data.length - HEADER_SIZE - slotCount() * SLOT_SIZE - liveBytes();
     }
 
+    // The largest row insert() would accept right now (0 if none): the free
+    // space, minus the 4 bytes a brand-new slot would need unless a deleted
+    // slot can be reused. HeapFile uses this to remember which pages have room.
+    public int maxInsertSize() {
+        int free = freeSpace() - (firstDeletedSlot() == -1 ? SLOT_SIZE : 0);
+        return Math.max(0, free);
+    }
+
     public boolean isLive(int slot) {
         checkSlot(slot);
         return slotOffset(slot) != 0;
