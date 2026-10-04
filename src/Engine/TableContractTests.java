@@ -13,9 +13,9 @@ import java.util.Random;
 
 /**
  * The rules every kind of Table must follow, written against the abstract
- * Table class and run once for each implementation. Today that is only
- * MemoryTable. A table backed by a file should be added to runAll() and has
- * to pass these exact checks, so the rest of the engine can't tell them apart.
+ * Table class and run once for each implementation: MemoryTable, and HeapTable
+ * (stored in a file). A new kind of table goes in runAll() and has to pass
+ * these exact checks, so the rest of the engine can't tell them apart.
  *
  * Every table here is declared with column types, since a file-backed table
  * can't exist without them.
@@ -25,10 +25,6 @@ import java.util.Random;
  */
 public class TableContractTests {
 
-    interface Factory {
-        Table create(String name, List<String> columns, List<String> types);
-    }
-
     public static void main(String[] args) {
         runAll();
         TestKit.finish();
@@ -36,9 +32,12 @@ public class TableContractTests {
 
     static void runAll() {
         runFor("MemoryTable", (name, columns, types) -> new MemoryTable(name, columns, types));
+        try (FileTables files = new FileTables()) {
+            runFor("HeapTable", files.factory());
+        }
     }
 
-    static void runFor(String kind, Factory f) {
+    static void runFor(String kind, TableFactory f) {
         String p = "contract [" + kind + "]: ";
         run(p + "insert and scan", () -> insertAndScan(f));
         run(p + "insert keeps its own copy of the row", () -> insertCopies(f));
@@ -56,7 +55,7 @@ public class TableContractTests {
     private static final List<String> COLUMNS = List.of("id", "name");
     private static final List<String> TYPES = List.of("DOUBLE", "STRING");
 
-    private static Table people(Factory f) {
+    private static Table people(TableFactory f) {
         return f.create("people", COLUMNS, TYPES);
     }
 
@@ -100,7 +99,7 @@ public class TableContractTests {
         assertEquals(a, b, message);
     }
 
-    private static Table filled(Factory f, int rows) {
+    private static Table filled(TableFactory f, int rows) {
         Table t = people(f);
         for (int i = 1; i <= rows; i++) {
             t.insert((double) i, "n" + i);
@@ -110,7 +109,7 @@ public class TableContractTests {
 
     // ---------- Tests ----------
 
-    static void insertAndScan(Factory f) {
+    static void insertAndScan(TableFactory f) {
         Table t = people(f);
         assertEquals("people", t.name, "name");
         assertEquals(COLUMNS, t.columns, "columns");
@@ -127,7 +126,7 @@ public class TableContractTests {
         assertContents(t, "and scanning again gives the same", row(1, "a"), row(2, "b"), row(3, "c"));
     }
 
-    static void insertCopies(Factory f) {
+    static void insertCopies(TableFactory f) {
         Table t = people(f);
         Object[] mine = { 1.0, "a" };
         t.insert(mine);
@@ -136,7 +135,7 @@ public class TableContractTests {
         assertContents(t, "later changes to the caller's array don't reach the table", row(1, "a"));
     }
 
-    static void insertRefusals(Factory f) {
+    static void insertRefusals(TableFactory f) {
         Table t = people(f);
         t.insert(1.0, "keep");
         expectThrows(RuntimeException.class, () -> t.insert(1.0), "too few values");
@@ -157,7 +156,7 @@ public class TableContractTests {
         assertContents(t, "none of the refused inserts left anything behind", row(1, "keep"));
     }
 
-    static void deleteWhere(Factory f) {
+    static void deleteWhere(TableFactory f) {
         Table t = filled(f, 6);
         int[] calls = { 0 };
         int removed = t.deleteWhere(row -> {
@@ -180,7 +179,7 @@ public class TableContractTests {
         assertContents(t, "inserting after deleting everything", row(7, "after"));
     }
 
-    static void deleteAllOrNothing(Factory f) {
+    static void deleteAllOrNothing(TableFactory f) {
         Table t = filled(f, 6);
         int[] calls = { 0 };
         expectThrows(IllegalStateException.class, () -> t.deleteWhere(row -> {
@@ -192,7 +191,7 @@ public class TableContractTests {
             row(1, "n1"), row(2, "n2"), row(3, "n3"), row(4, "n4"), row(5, "n5"), row(6, "n6"));
     }
 
-    static void updateWhere(Factory f) {
+    static void updateWhere(TableFactory f) {
         Table t = filled(f, 5);
         int[] tested = { 0 };
         int[] changed = { 0 };
@@ -218,7 +217,7 @@ public class TableContractTests {
             row(1, "all"), row(2, "all"), row(3, "all"), row(4, "all"), row(5, "all"));
     }
 
-    static void updateAllOrNothing(Factory f) {
+    static void updateAllOrNothing(TableFactory f) {
         Table t = filled(f, 6);
         Object[][] original = { row(1, "n1"), row(2, "n2"), row(3, "n3"), row(4, "n4"), row(5, "n5"), row(6, "n6") };
 
@@ -246,7 +245,7 @@ public class TableContractTests {
     // Thousands of random inserts, deletes and updates, checked against a plain
     // Java list. Compared ignoring order, because a table stored on disk is
     // free to reuse the space of a deleted row.
-    static void randomOperations(Factory f) {
+    static void randomOperations(TableFactory f) {
         Random rnd = new Random(2024);
         Table t = people(f);
         List<Object[]> model = new ArrayList<>();
@@ -282,7 +281,7 @@ public class TableContractTests {
         assertSameRows(model, t, "at the end");
     }
 
-    static void saveAndLoad(Factory f) throws IOException {
+    static void saveAndLoad(TableFactory f) throws IOException {
         Table t = people(f);
         String[] names = { "plain", "has,comma", "back\\slash", "new\nline", "", "caf\u00e9 \u65e5\u672c \uD83D\uDE00", " spaced " };
         for (int i = 0; i < names.length; i++) {

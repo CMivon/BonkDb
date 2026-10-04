@@ -20,7 +20,35 @@ import java.util.Map;
  */
 final class TestDb {
 
+    // What CREATE TABLE makes. In-memory tables unless withFileTables() is running.
+    private static TableFactory defaultFactory = (name, columns, types) -> new MemoryTable(name, columns, types);
+    private static boolean fileTables = false;
+
     final Map<String, Table> catalog = new HashMap<>();
+    private final TableFactory factory = defaultFactory;
+
+    // True while withFileTables() is running.
+    static boolean usingFileTables() {
+        return fileTables;
+    }
+
+    // Runs body with every TestDb making file-backed tables, in a temporary
+    // folder that is cleaned up afterwards. Test names are labelled "[files]".
+    static void withFileTables(Runnable body) {
+        try (FileTables files = new FileTables()) {
+            TableFactory previous = defaultFactory;
+            defaultFactory = files.factory();
+            fileTables = true;
+            TestKit.prefix = "[files] ";
+            try {
+                body.run();
+            } finally {
+                defaultFactory = previous;
+                fileTables = false;
+                TestKit.prefix = "";
+            }
+        }
+    }
 
     // The same three tables the CLI seeds, but built with real CREATE TABLE
     // and INSERT statements so they have declared column types.
@@ -58,7 +86,7 @@ final class TestDb {
             return ExecutionDemo.executeSelect((MiniParser.SelectStmt) stmt, catalog);
         }
         if (stmt instanceof MiniParser.CreateTableStmt) {
-            ExecutionDemo.executeCreateTable((MiniParser.CreateTableStmt) stmt, catalog);
+            ExecutionDemo.executeCreateTable((MiniParser.CreateTableStmt) stmt, catalog, factory);
             return 0;
         }
         if (stmt instanceof MiniParser.InsertStmt) {
