@@ -50,6 +50,11 @@ public class HeapFileTest {
             run("heap: update that doesn't fit moves the row", HeapFileTest::updateRelocates);
             run("heap: rows larger than a page are refused cleanly", HeapFileTest::oversizeRows);
             run("heap: invalid rows are refused and change nothing", HeapFileTest::invalidRows);
+            run("heap: NULL values in rows", HeapFileTest::nullValues);
+            run("heap: a one-column table of NULLs and empty strings", HeapFileTest::oneColumnNulls);
+            run("heap: NOT NULL columns are enforced", HeapFileTest::notNullColumns);
+            run("heap: NULLs make rows smaller, so more fit on a page", HeapFileTest::nullsAndPageFit);
+            run("heap: turning a NULL into a value can force a row to move", HeapFileTest::nullToValueRelocates);
             run("heap: invalid addresses", HeapFileTest::invalidAddresses);
             run("heap: many rows across many pages", HeapFileTest::manyRows);
             run("heap: freed space is reused, even after reopening", HeapFileTest::freedSpaceIsReused);
@@ -70,8 +75,9 @@ public class HeapFileTest {
         return new Schema(List.of("id", "name", "score"), List.of("DOUBLE", "STRING", "DOUBLE"));
     }
 
-    // Two columns, so a row with a 10-character name is exactly 20 bytes
-    // (8 + 2 + 10). With 128-byte pages that packs 5 rows per page.
+    // Two columns, so a row with a 9-character name is exactly 20 bytes
+    // (1 byte of null bitmap + 8 + 2 + 9). With 128-byte pages that packs 5
+    // rows per page.
     private static Schema pairSchema() {
         return new Schema(List.of("id", "name"), List.of("DOUBLE", "STRING"));
     }
@@ -203,7 +209,7 @@ public class HeapFileTest {
             // 20-byte rows, 5 per 128-byte page: page 1 fills up, the 6th goes to page 2.
             List<RowId> ids = new ArrayList<>();
             for (int i = 0; i < 6; i++) {
-                ids.add(h.insert(pair(i, "abcdefghij")));
+                ids.add(h.insert(pair(i, "abcdefghi")));
             }
             assertEquals(new RowId(1, 0), ids.get(0), "first row");
             assertEquals(new RowId(2, 0), ids.get(5), "sixth row starts page 2");
@@ -218,7 +224,7 @@ public class HeapFileTest {
             assertTrue(h.get(ids.get(0)) == null, "the old address is now empty");
             assertRow(bigger, h.get(moved), "the row at its new address");
             for (int i = 1; i < 6; i++) {
-                assertRow(pair(i, "abcdefghij"), h.get(ids.get(i)), "row " + i + " unaffected");
+                assertRow(pair(i, "abcdefghi"), h.get(ids.get(i)), "row " + i + " unaffected");
             }
             assertEquals(6, scanAll(h).size(), "still exactly six rows");
             assertEquals(2, h.dataPageCount(), "no extra page was needed");
@@ -231,18 +237,19 @@ public class HeapFileTest {
             assertEquals(120, h.maxRowSize(), "max row size for 128-byte pages");
 
             // Refused before anything is written: not even an empty page gets added.
+            // 1 (null bitmap) + 2 (length) + 118 characters = 121 bytes, one over.
             expectThrows(IllegalArgumentException.class,
-                () -> h.insert(new Object[] { "x".repeat(119) }), "121-byte row");
+                () -> h.insert(new Object[] { "x".repeat(118) }), "121-byte row");
             assertEquals(0, h.dataPageCount(), "a refused insert allocates nothing");
 
-            RowId exact = h.insert(new Object[] { "y".repeat(118) }); // 2 + 118 = 120 bytes
+            RowId exact = h.insert(new Object[] { "y".repeat(117) }); // 1 + 2 + 117 = 120 bytes
             assertEquals(new RowId(1, 0), exact, "a row of exactly the maximum size fits");
-            assertEquals(118, ((String) h.get(exact)[0]).length(), "and reads back intact");
+            assertEquals(117, ((String) h.get(exact)[0]).length(), "and reads back intact");
 
             RowId small = h.insert(new Object[] { "z" });
             int pages = h.dataPageCount();
             expectThrows(IllegalArgumentException.class,
-                () -> h.update(small, new Object[] { "q".repeat(119) }), "growing a row past the page size");
+                () -> h.update(small, new Object[] { "q".repeat(118) }), "growing a row past the page size");
             assertRow(new Object[] { "z" }, h.get(small), "the row is unchanged after a refused update");
             assertEquals(pages, h.dataPageCount(), "a refused update allocates nothing");
             assertEquals(2, scanAll(h).size(), "row count unchanged");
@@ -257,8 +264,6 @@ public class HeapFileTest {
                 () -> h.insert(new Object[] { "x", "a", 1.0 }), "text in a DOUBLE column");
             expectThrows(IllegalArgumentException.class,
                 () -> h.insert(new Object[] { 1.0, 2.0, 3.0 }), "number in a STRING column");
-            expectThrows(IllegalArgumentException.class,
-                () -> h.insert(new Object[] { 1.0, null, 3.0 }), "null value");
             assertEquals(0, h.dataPageCount(), "refused inserts allocate nothing");
             assertEquals(0, scanAll(h).size(), "and store nothing");
 
@@ -266,6 +271,167 @@ public class HeapFileTest {
             expectThrows(IllegalArgumentException.class,
                 () -> h.update(id, new Object[] { "bad", "ok", 1.0 }), "invalid replacement row");
             assertRow(row(1, "ok", 1), h.get(id), "row unchanged after a refused update");
+        }
+    }
+
+    // ---------- NULL ----------
+
+    static void nullValues() throws IOException {
+        Path p = file("nulls.bonk");
+        Object[][] rows = {
+            { 1.0, null, 2.5 },
+            { null, "x", null },
+            { null, null, null },
+            { 3.0, "", 0.0 },
+            { null, "", null },
+        };
+        List<RowId> ids = new ArrayList<>();
+        try (HeapFile h = HeapFile.create(p, 1024, schema())) {
+            for (Object[] r : rows) {
+                ids.add(h.insert(r));
+            }
+            for (int i = 0; i < rows.length; i++) {
+                assertRow(rows[i], h.get(ids.get(i)), "row " + i);
+            }
+            // NULL is not an empty string and not zero.
+            assertEquals("", h.get(ids.get(3))[1], "an empty string is a value");
+            assertEquals(0.0, h.get(ids.get(3))[2] ,"zero is a value");
+            assertTrue(h.get(ids.get(2))[0] == null, "NULL is NULL");
+        }
+
+        // Everything, NULLs included, survives closing and reopening, and shows up in a scan.
+        try (HeapFile h = HeapFile.open(p)) {
+            for (int i = 0; i < rows.length; i++) {
+                assertRow(rows[i], h.get(ids.get(i)), "row " + i + " after reopen");
+            }
+            List<HeapRow> scanned = scanAll(h);
+            assertEquals(rows.length, scanned.size(), "scan finds every row, including the all-NULL one");
+            for (int i = 0; i < rows.length; i++) {
+                assertRow(rows[i], scanned.get(i).values, "scanned row " + i);
+            }
+        }
+
+        // Updating to and from NULL.
+        try (HeapFile h = HeapFile.open(p)) {
+            RowId id = ids.get(0); // { 1.0, null, 2.5 }
+            assertEquals(id, h.update(id, new Object[] { 1.0, "now it has text", 2.5 }), "NULL -> value, fits in place");
+            assertRow(new Object[] { 1.0, "now it has text", 2.5 }, h.get(id), "after NULL -> value");
+            assertEquals(id, h.update(id, new Object[] { null, null, null }), "everything -> NULL shrinks in place");
+            assertRow(new Object[] { null, null, null }, h.get(id), "after everything -> NULL");
+            assertEquals(id, h.update(id, new Object[] { 9.0, "back", 8.0 }), "and back again");
+            assertRow(new Object[] { 9.0, "back", 8.0 }, h.get(id), "after NULL -> values");
+
+            // A row of all NULLs is a real row. Deleting it makes it read as
+            // deleted (null), which is different from reading as [null, null, null].
+            RowId allNull = ids.get(2);
+            assertTrue(h.get(allNull) != null, "an all-NULL row exists");
+            assertTrue(h.delete(allNull), "it can be deleted");
+            assertTrue(h.get(allNull) == null, "and then reads as deleted");
+            assertEquals(rows.length - 1, scanAll(h).size(), "and is gone from the scan");
+        }
+    }
+
+    // One column means the whole row is either the bitmap alone (NULL) or
+    // the bitmap plus a string, so every row is non-empty on disk.
+    static void oneColumnNulls() throws IOException {
+        Path p = file("onecolumn.bonk");
+        Schema one = new Schema(List.of("s"), List.of("STRING"));
+        Object[] values = { "first", "", null, "third", null };
+        List<RowId> ids = new ArrayList<>();
+        try (HeapFile h = HeapFile.create(p, 128, one)) {
+            for (Object v : values) {
+                ids.add(h.insert(new Object[] { v }));
+            }
+        }
+        try (HeapFile h = HeapFile.open(p)) {
+            for (int i = 0; i < values.length; i++) {
+                Object[] got = h.get(ids.get(i));
+                assertTrue(got != null && got.length == 1, "row " + i + " exists with one value");
+                assertTrue(java.util.Objects.equals(values[i], got[0]),
+                    "row " + i + ": expected " + values[i] + " but got " + got[0]);
+            }
+            assertEquals(5, scanAll(h).size(), "all five rows are found by a scan, including the empty string and the NULLs");
+        }
+    }
+
+    static void notNullColumns() throws IOException {
+        Path p = file("notnull.bonk");
+        Schema schema = new Schema(List.of("id", "name", "score"), List.of("DOUBLE", "STRING", "DOUBLE"),
+            List.of(false, true, true));
+        RowId kept;
+        try (HeapFile h = HeapFile.create(p, 1024, schema)) {
+            try {
+                h.insert(new Object[] { null, "x", 1.0 });
+                throw new AssertionError("NULL in a NOT NULL column should be refused");
+            } catch (IllegalArgumentException e) {
+                assertTrue(e.getMessage().contains("'id'") && e.getMessage().contains("NOT NULL"),
+                    "message names the column: " + e.getMessage());
+            }
+            assertEquals(0, h.dataPageCount(), "a refused insert allocates nothing");
+            assertEquals(0, scanAll(h).size(), "and stores nothing");
+
+            // NULL is fine in the nullable columns.
+            kept = h.insert(new Object[] { 1.0, null, null });
+            assertRow(new Object[] { 1.0, null, null }, h.get(kept), "NULLs in the nullable columns");
+
+            // An update can't put NULL into the NOT NULL column either, and leaves the row alone.
+            expectThrows(IllegalArgumentException.class,
+                () -> h.update(kept, new Object[] { null, "y", 2.0 }), "update to NULL in a NOT NULL column");
+            assertRow(new Object[] { 1.0, null, null }, h.get(kept), "row unchanged after the refused update");
+            // But it can be set to NULL in a nullable one.
+            assertEquals(kept, h.update(kept, new Object[] { 5.0, "z", null }), "update within the rules");
+        }
+
+        // The rule is part of the file, so it still applies after reopening.
+        try (HeapFile h = HeapFile.open(p)) {
+            assertTrue(!h.schema().isNullable(0), "id is still NOT NULL");
+            expectThrows(IllegalArgumentException.class,
+                () -> h.insert(new Object[] { null, "x", 1.0 }), "NOT NULL enforced after reopen");
+            assertRow(new Object[] { 5.0, "z", null }, h.get(kept), "data intact");
+        }
+    }
+
+    // A NULL stores nothing but its bit, so rows with NULLs are smaller and a
+    // page holds more of them. With 128-byte pages: a {number, NULL} row is
+    // 1 + 8 = 9 bytes plus a 4-byte slot, so 9 rows fit; the tenth starts a new page.
+    static void nullsAndPageFit() throws IOException {
+        try (HeapFile h = HeapFile.create(file("fit.bonk"), 128, pairSchema())) {
+            for (int i = 0; i < 9; i++) {
+                assertEquals(1, h.insert(new Object[] { (double) i, null }).pageNo, "row " + i + " fits on page 1");
+            }
+            assertEquals(1, h.dataPageCount(), "nine NULL-bearing rows fit on one page");
+            assertEquals(2, h.insert(new Object[] { 9.0, null }).pageNo, "the tenth starts page 2");
+            assertEquals(2, h.dataPageCount(), "two pages");
+        }
+        // The same rows with a 9-character name are 20 bytes: only 5 per page.
+        try (HeapFile h = HeapFile.create(file("fit2.bonk"), 128, pairSchema())) {
+            for (int i = 0; i < 6; i++) {
+                h.insert(pair(i, "abcdefghi"));
+            }
+            assertEquals(2, h.dataPageCount(), "six full-size rows need two pages");
+        }
+    }
+
+    // Filling in a NULL makes a row bigger. If the page has no room for the
+    // growth, the row has to move, exactly as with any other growing update.
+    static void nullToValueRelocates() throws IOException {
+        try (HeapFile h = HeapFile.create(file("nullmove.bonk"), 128, pairSchema())) {
+            List<RowId> ids = new ArrayList<>();
+            for (int i = 0; i < 9; i++) {
+                ids.add(h.insert(new Object[] { (double) i, null })); // page 1 is now almost full
+            }
+            assertEquals(1, h.dataPageCount(), "nine 9-byte rows fill page 1");
+
+            Object[] grown = { 0.0, "abcdefgh" }; // 1 + 8 + 2 + 8 = 19 bytes, 10 more than before
+            RowId moved = h.update(ids.get(0), grown);
+            assertTrue(!moved.equals(ids.get(0)), "the grown row no longer fits in place, so it moved");
+            assertEquals(new RowId(2, 0), moved, "to a newly added page");
+            assertTrue(h.get(ids.get(0)) == null, "the old address is empty");
+            assertRow(grown, h.get(moved), "the row at its new address");
+            for (int i = 1; i < 9; i++) {
+                assertRow(new Object[] { (double) i, null }, h.get(ids.get(i)), "row " + i + " unaffected");
+            }
+            assertEquals(9, scanAll(h).size(), "still nine rows");
         }
     }
 
@@ -333,7 +499,7 @@ public class HeapFileTest {
             // 5 rows per page: 20 rows fill pages 1-4 exactly.
             List<RowId> ids = new ArrayList<>();
             for (int i = 0; i < 20; i++) {
-                ids.add(h.insert(pair(i, "abcdefghij")));
+                ids.add(h.insert(pair(i, "abcdefghi")));
             }
             assertEquals(4, h.dataPageCount(), "20 rows fill 4 pages");
             for (int i = 0; i < 20; i++) {
@@ -347,7 +513,7 @@ public class HeapFileTest {
             // 8 new rows must fill those 8 freed spots, not add pages.
             int inPage2 = 0, inPage4 = 0;
             for (int i = 0; i < 8; i++) {
-                RowId id = h.insert(pair(100 + i, "abcdefghij"));
+                RowId id = h.insert(pair(100 + i, "abcdefghi"));
                 if (id.pageNo == 2) inPage2++;
                 else if (id.pageNo == 4) inPage4++;
                 else throw new AssertionError("new row went to " + id + " instead of a page with freed space");
@@ -356,7 +522,7 @@ public class HeapFileTest {
             assertEquals(3, inPage4, "page 4 refilled");
             assertEquals(4, h.dataPageCount(), "no page was added while freed space remained");
 
-            assertEquals(5, h.insert(pair(200, "abcdefghij")).pageNo, "only now does it add page 5");
+            assertEquals(5, h.insert(pair(200, "abcdefghi")).pageNo, "only now does it add page 5");
             assertEquals(5, h.dataPageCount(), "page count");
         }
 
@@ -366,7 +532,7 @@ public class HeapFileTest {
             // been deleted since the reopen, so only a correctly rebuilt table
             // can know that; without it these would all land on a new page 6.
             for (int i = 0; i < 4; i++) {
-                assertEquals(5, h.insert(pair(300 + i, "abcdefghij")).pageNo, "after reopen, page 5's spare room is found");
+                assertEquals(5, h.insert(pair(300 + i, "abcdefghi")).pageNo, "after reopen, page 5's spare room is found");
             }
             assertEquals(5, h.dataPageCount(), "no page added while page 5 had room");
 
@@ -375,7 +541,7 @@ public class HeapFileTest {
                 if (r.id.pageNo == 1) h.delete(r.id);
             }
             for (int i = 0; i < 5; i++) {
-                assertEquals(1, h.insert(pair(400 + i, "abcdefghij")).pageNo, "freed page 1 is reused");
+                assertEquals(1, h.insert(pair(400 + i, "abcdefghi")).pageNo, "freed page 1 is reused");
             }
             assertEquals(5, h.dataPageCount(), "still 5 pages");
         }
@@ -482,7 +648,7 @@ public class HeapFileTest {
         Path p = file("badpage.bonk");
         try (HeapFile h = HeapFile.create(p, 128, pairSchema())) {
             for (int i = 0; i < 12; i++) {
-                h.insert(pair(i, "abcdefghij")); // 3 pages
+                h.insert(pair(i, "abcdefghi")); // 3 pages
             }
         }
         byte[] valid = Files.readAllBytes(p);
@@ -597,7 +763,13 @@ public class HeapFileTest {
         for (int i = 0; i < count; i++) {
             text.append(pieces[rnd.nextInt(pieces.length)]);
         }
-        return row(rnd.nextInt(100000), text.toString(), rnd.nextDouble() * 1000);
+        Object[] r = row(rnd.nextInt(100000), text.toString(), rnd.nextDouble() * 1000);
+        for (int i = 0; i < r.length; i++) {
+            if (rnd.nextInt(100) < 15) {
+                r[i] = null; // about one value in seven is NULL
+            }
+        }
+        return r;
     }
 
     private static RowId randomId(Map<RowId, Object[]> model, Random rnd) {

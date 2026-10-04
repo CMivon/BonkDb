@@ -1,3 +1,4 @@
+
 package Storage;
 
 import java.io.EOFException;
@@ -44,7 +45,7 @@ import java.util.Set;
 public class PageFile implements AutoCloseable {
 
     static final int MAGIC = 0x424F4E4B; // "BONK"
-    static final int VERSION = 1;
+    static final int VERSION = 2; // 1 -> 2: rows gained a null bitmap (see RowSerializer)
     private static final int FIXED_HEADER_BYTES = 4 + 2 + 4; // magic + version + page size
 
     // Files currently open in this process, by real path.

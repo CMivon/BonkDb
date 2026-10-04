@@ -1,3 +1,4 @@
+
 package Storage;
 
 import static Storage.TestKit.*;
@@ -25,6 +26,11 @@ public class StorageTest {
         run("serializer: round trip", StorageTest::serializerRoundTrip);
         run("serializer: special doubles and unicode", StorageTest::serializerSpecialValues);
         run("serializer: rejects bad input", StorageTest::serializerRejectsBadInput);
+        run("serializer: NULL values round trip and take no space", StorageTest::serializerNulls);
+        run("serializer: every NULL pattern, across bitmap byte boundaries", StorageTest::serializerNullPatterns);
+        run("serializer: null bitmap layout", StorageTest::serializerBitmapLayout);
+        run("serializer: NOT NULL columns", StorageTest::serializerNotNull);
+        run("serializer: rejects damaged null bitmaps", StorageTest::serializerRejectsBadBitmaps);
         run("serializer: rejects bad bytes", StorageTest::serializerRejectsBadBytes);
         run("page: insert, read, delete, slot reuse", StorageTest::pageBasics);
         run("page: reports full", StorageTest::pageFillsUp);
@@ -44,7 +50,7 @@ public class StorageTest {
         List<String> types = List.of("DOUBLE", "STRING", "DOUBLE");
         Object[] row = { 1.5, "hello", -2.25 };
         byte[] bytes = RowSerializer.serialize(row, types);
-        assertEquals(8 + 2 + 5 + 8, bytes.length, "serialized size");
+        assertEquals(1 + 8 + 2 + 5 + 8, bytes.length, "serialized size (1-byte null bitmap, then the values)");
         assertTrue(Arrays.equals(row, RowSerializer.deserialize(bytes, types)), "round trip");
 
         List<String> onlyText = List.of("STRING", "STRING");
@@ -85,8 +91,6 @@ public class StorageTest {
         expectThrows(IllegalArgumentException.class,
             () -> RowSerializer.serialize(new Object[] { 1.0, "a", "b" }, types), "too many values");
         expectThrows(IllegalArgumentException.class,
-            () -> RowSerializer.serialize(new Object[] { null, "a" }, types), "null value");
-        expectThrows(IllegalArgumentException.class,
             () -> RowSerializer.serialize(new Object[] { "oops", "a" }, types), "string in DOUBLE column");
         expectThrows(IllegalArgumentException.class,
             () -> RowSerializer.serialize(new Object[] { 1.0, 2.0 }, types), "number in STRING column");
@@ -110,6 +114,159 @@ public class StorageTest {
             () -> RowSerializer.deserialize(Arrays.copyOf(good, good.length + 3), types), "trailing bytes");
         expectThrows(IllegalArgumentException.class,
             () -> RowSerializer.deserialize(new byte[0], types), "empty input");
+    }
+
+    // ---------- NULL tests ----------
+
+    static void serializerNulls() {
+        List<String> types = List.of("DOUBLE", "STRING", "DOUBLE");
+        Object[][] rows = {
+            { null, "x", 1.0 }, { 1.0, null, 2.0 }, { 1.0, "x", null },
+            { null, null, 2.0 }, { null, "x", null }, { 1.0, null, null }, { null, null, null },
+        };
+        for (Object[] row : rows) {
+            byte[] bytes = RowSerializer.serialize(row, types);
+            assertTrue(Arrays.equals(row, RowSerializer.deserialize(bytes, types)), "round trip of " + Arrays.toString(row));
+        }
+
+        // A NULL costs nothing beyond its bit in the bitmap.
+        int full = RowSerializer.serialize(new Object[] { 1.0, "hello", 2.0 }, types).length;
+        assertEquals(1 + 8 + 2 + 5 + 8, full, "a row with no NULLs");
+        assertEquals(full - 8, RowSerializer.serialize(new Object[] { null, "hello", 2.0 }, types).length, "NULL number saves 8 bytes");
+        assertEquals(full - 7, RowSerializer.serialize(new Object[] { 1.0, null, 2.0 }, types).length, "NULL text saves its length and contents");
+        assertEquals(1, RowSerializer.serialize(new Object[] { null, null, null }, types).length, "an all-NULL row is just the bitmap");
+
+        // NULL is its own value: it is not zero, not an empty string, and not NaN.
+        Object[] zeros = { 0.0, "", 0.0 };
+        Object[] allNull = { null, null, null };
+        assertTrue(Arrays.equals(zeros, RowSerializer.deserialize(RowSerializer.serialize(zeros, types), types)), "zeros stay zeros");
+        assertTrue(Arrays.equals(allNull, RowSerializer.deserialize(RowSerializer.serialize(allNull, types), types)), "NULLs stay NULL");
+        assertTrue(!Arrays.equals(RowSerializer.serialize(zeros, types), RowSerializer.serialize(allNull, types)), "and they are stored differently");
+        Object[] nan = RowSerializer.deserialize(RowSerializer.serialize(new Object[] { Double.NaN, "", null }, types), types);
+        assertTrue(nan[0] instanceof Double && ((Double) nan[0]).isNaN(), "NaN is a number, not NULL");
+        assertEquals("", nan[1], "an empty string is a value, not NULL");
+        assertTrue(nan[2] == null, "and the third is NULL");
+
+        // A one-column row of NULL is still one byte long, never zero.
+        assertEquals(1, RowSerializer.serialize(new Object[] { null }, List.of("STRING")).length, "single NULL column");
+    }
+
+    // Every combination of NULL and non-NULL for 1 to 10 columns (covering the
+    // step from one bitmap byte to two), then random patterns on a wide table.
+    static void serializerNullPatterns() {
+        for (int n = 1; n <= 10; n++) {
+            List<String> types = new ArrayList<>();
+            for (int i = 0; i < n; i++) types.add(i % 2 == 0 ? "DOUBLE" : "STRING");
+            for (int mask = 0; mask < (1 << n); mask++) {
+                Object[] row = new Object[n];
+                int expectedSize = (n + 7) / 8;
+                for (int i = 0; i < n; i++) {
+                    if (((mask >> i) & 1) == 1) {
+                        row[i] = null;
+                    } else if (types.get(i).equals("DOUBLE")) {
+                        row[i] = (double) i;
+                        expectedSize += 8;
+                    } else {
+                        row[i] = "s" + i;
+                        expectedSize += 2 + ("s" + i).length();
+                    }
+                }
+                byte[] bytes = RowSerializer.serialize(row, types);
+                assertEquals(expectedSize, bytes.length, n + " columns, mask " + mask + ": size");
+                assertTrue(Arrays.equals(row, RowSerializer.deserialize(bytes, types)), n + " columns, mask " + mask + ": round trip");
+            }
+        }
+
+        Random rnd = new Random(77);
+        List<String> wide = new ArrayList<>();
+        for (int i = 0; i < 41; i++) wide.add(i % 3 == 0 ? "STRING" : "DOUBLE");
+        for (int round = 0; round < 300; round++) {
+            Object[] row = new Object[41];
+            for (int i = 0; i < 41; i++) {
+                if (rnd.nextInt(3) == 0) continue; // NULL
+                row[i] = wide.get(i).equals("DOUBLE") ? (Object) rnd.nextDouble() : (Object) ("v" + rnd.nextInt(1000));
+            }
+            assertTrue(Arrays.equals(row, RowSerializer.deserialize(RowSerializer.serialize(row, wide), wide)), "wide row " + round);
+        }
+    }
+
+    // Pins the exact bitmap layout: bit i of the bitmap is column i, counting
+    // from the least significant bit of byte 0. Stored files depend on this.
+    static void serializerBitmapLayout() {
+        List<String> ten = new ArrayList<>();
+        for (int i = 0; i < 10; i++) ten.add("DOUBLE");
+
+        Object[] row = new Object[10];
+        Arrays.fill(row, 1.0);
+        row[0] = null;
+        row[9] = null;
+        byte[] bytes = RowSerializer.serialize(row, ten);
+        assertEquals(2 + 8 * 8, bytes.length, "two bitmap bytes, then eight numbers");
+        assertEquals((byte) 0x01, bytes[0], "column 0 is bit 0 of byte 0");
+        assertEquals((byte) 0x02, bytes[1], "column 9 is bit 1 of byte 1");
+
+        row = new Object[10];
+        Arrays.fill(row, 1.0);
+        row[7] = null;
+        assertEquals((byte) 0x80, RowSerializer.serialize(row, ten)[0], "column 7 is the top bit of byte 0");
+        row[7] = 1.0;
+        row[8] = null;
+        byte[] eight = RowSerializer.serialize(row, ten);
+        assertEquals((byte) 0x00, eight[0], "column 8 doesn't touch byte 0");
+        assertEquals((byte) 0x01, eight[1], "column 8 is bit 0 of byte 1");
+    }
+
+    static void serializerNotNull() {
+        Schema schema = new Schema(List.of("id", "name", "score"), List.of("DOUBLE", "STRING", "DOUBLE"),
+            List.of(false, true, true));
+
+        Object[] ok = { 1.0, null, null };
+        assertTrue(Arrays.equals(ok, RowSerializer.deserialize(RowSerializer.serialize(ok, schema), schema.columnTypes())),
+            "NULL is fine in nullable columns");
+        try {
+            RowSerializer.serialize(new Object[] { null, "x", 1.0 }, schema);
+            throw new AssertionError("NULL in a NOT NULL column should be refused");
+        } catch (IllegalArgumentException e) {
+            assertTrue(e.getMessage().contains("'id'") && e.getMessage().contains("NOT NULL"),
+                "message names the column: " + e.getMessage());
+        }
+
+        // The list-of-types form knows nothing about NOT NULL: every column may be NULL.
+        RowSerializer.serialize(new Object[] { null, null, null }, schema.columnTypes());
+        // And a plain Schema (no flags given) is all-nullable.
+        RowSerializer.serialize(new Object[] { null, null }, new Schema(List.of("a", "b"), List.of("DOUBLE", "STRING")));
+        // Type checks still apply to the values that are present.
+        expectThrows(IllegalArgumentException.class,
+            () -> RowSerializer.serialize(new Object[] { "oops", null, null }, schema), "wrong type alongside NULLs");
+        expectThrows(IllegalArgumentException.class,
+            () -> RowSerializer.serialize(new Object[] { null, "x" }, List.of("DOUBLE", "BOOLEAN")), "unknown type, even over a NULL");
+    }
+
+    static void serializerRejectsBadBitmaps() {
+        List<String> types = List.of("DOUBLE", "STRING", "DOUBLE");
+        byte[] good = RowSerializer.serialize(new Object[] { 1.0, "ab", null }, types);
+        assertEquals((byte) 0x04, good[0], "column 2 is NULL");
+
+        byte[] strayBit = good.clone();
+        strayBit[0] |= 0x08; // a bit for a fourth column that doesn't exist
+        expectThrows(IllegalArgumentException.class, () -> RowSerializer.deserialize(strayBit, types), "bit beyond the last column");
+
+        byte[] clearedBit = good.clone();
+        clearedBit[0] = 0; // claims column 2 holds a value, but there are no bytes for it
+        expectThrows(IllegalArgumentException.class, () -> RowSerializer.deserialize(clearedBit, types), "NULL bit cleared, value missing");
+
+        byte[] extraBit = good.clone();
+        extraBit[0] |= 0x01; // claims column 0 is NULL, leaving its 8 bytes unread
+        expectThrows(IllegalArgumentException.class, () -> RowSerializer.deserialize(extraBit, types), "NULL bit set over real data");
+
+        List<String> nine = new ArrayList<>();
+        for (int i = 0; i < 9; i++) nine.add("DOUBLE");
+        expectThrows(IllegalArgumentException.class,
+            () -> RowSerializer.deserialize(new byte[] { (byte) 0xFF }, nine), "bitmap cut short (9 columns need 2 bytes)");
+        expectThrows(IllegalArgumentException.class,
+            () -> RowSerializer.deserialize(new byte[0], types), "no bytes at all");
+        expectThrows(IllegalArgumentException.class,
+            () -> RowSerializer.deserialize(new byte[] { 0x07, 0 }, types), "all NULL, but a stray byte follows");
     }
 
     // ---------- Page tests ----------
@@ -157,12 +314,14 @@ public class StorageTest {
         assertEquals(5, inserted, "rows that fit");
         assertEquals(-1, page.insert(new byte[20]), "full page reports -1");
         assertEquals(-1, page.insert(new byte[1]), "even a tiny row doesn't fit with no slot room");
+        assertEquals(0, page.maxInsertSize(), "a full page can accept nothing");
         page.checkInvariants();
     }
 
     static void pageRowSizeLimits() {
         Page page = new Page(128);
         assertEquals(120, page.maxRowSize(), "max row size");
+        assertEquals(120, page.maxInsertSize(), "an empty page can accept a max-size row");
         assertEquals(0, page.insert(new byte[120]), "a row of exactly the max size fits an empty page");
         Page other = new Page(128);
         expectThrows(IllegalArgumentException.class, () -> other.insert(new byte[121]), "row can never fit");
@@ -360,6 +519,7 @@ public class StorageTest {
             }
 
             page.checkInvariants();
+            assertMaxInsertSizeIsExact(page, "step " + step);
             assertEquals(model.size(), page.liveRowCount(), "step " + step + ": live row count");
             assertEquals(pageSize - 4 - page.slotCount() * 4 - liveBytes(model), page.freeSpace(),
                 "step " + step + ": free space");
@@ -426,6 +586,21 @@ public class StorageTest {
             assertTrue(Arrays.equals(rows.get(i), RowSerializer.deserialize(bytes, types)), "row " + i);
         }
         System.out.println("      300 rows across " + pages.size() + " pages");
+    }
+
+    // maxInsertSize() must be exact: a row of that size is accepted, one byte
+    // more is refused. Checked on copies so the page under test isn't changed.
+    private static void assertMaxInsertSizeIsExact(Page page, String where) {
+        int cap = page.maxInsertSize();
+        assertTrue(cap >= 0 && cap <= page.maxRowSize(), where + ": maxInsertSize " + cap + " out of range");
+        if (cap >= 1) {
+            Page fits = Page.fromBytes(page.toBytes());
+            assertTrue(fits.insert(new byte[cap]) >= 0, where + ": a row of maxInsertSize (" + cap + ") should fit");
+        }
+        if (cap + 1 <= page.maxRowSize()) {
+            Page tooBig = Page.fromBytes(page.toBytes());
+            assertEquals(-1, tooBig.insert(new byte[cap + 1]), where + ": a row one byte over maxInsertSize must not fit");
+        }
     }
 
     // ---------- Helpers ----------

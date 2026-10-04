@@ -1,3 +1,4 @@
+
 package Storage;
 
 import java.io.IOException;
@@ -28,8 +29,11 @@ import java.util.NoSuchElementException;
  * a new RowId, which update() returns. Callers holding the old RowId must
  * switch to the new one.
  *
- * Limits: a row must fit in a single page (there are no overflow pages), and
- * there are no NULLs. There is no transaction log: each insert, delete, or
+ * A NULL value is a Java null inside the row array, in both directions.
+ * Columns the schema marks NOT NULL refuse it.
+ *
+ * Limits: a row must fit in a single page (there are no overflow pages).
+ * There is no transaction log: each insert, delete, or
  * update is a few separate page writes, so a crash partway through one can
  * leave it half-done. A relocating update inserts the new copy before
  * deleting the old one, so a failure in between leaves a duplicate rather
@@ -110,7 +114,8 @@ public class HeapFile implements AutoCloseable {
         return insertBytes(encode(row));
     }
 
-    // Returns the row at id, or null if that row has been deleted.
+    // Returns the row at id (its values may include nulls), or null itself if
+    // that row has been deleted.
     // Throws IndexOutOfBoundsException if the page or slot doesn't exist.
     public Object[] get(RowId id) throws IOException {
         Page page = pageFile.readPage(id.pageNo);
@@ -176,7 +181,7 @@ public class HeapFile implements AutoCloseable {
     // ---------- Internals ----------
 
     private byte[] encode(Object[] row) {
-        byte[] bytes = RowSerializer.serialize(row, schema.columnTypes());
+        byte[] bytes = RowSerializer.serialize(row, schema);
         if (bytes.length > maxRowSize) {
             throw new IllegalArgumentException("Row needs " + bytes.length + " bytes but a "
                 + pageFile.pageSize() + "-byte page holds at most " + maxRowSize
