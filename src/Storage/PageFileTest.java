@@ -37,9 +37,11 @@ public class PageFileTest {
         }
         try {
             run("schema: accessors, equality, and encoding round trip", PageFileTest::schemaBasics);
+            run("schema: NOT NULL flags and their encoding", PageFileTest::schemaNullability);
             run("schema: rejects invalid definitions", PageFileTest::schemaRejectsInvalid);
             run("schema: rejects malformed bytes", PageFileTest::schemaRejectsBadBytes);
             run("file: create, close, reopen", PageFileTest::createAndReopen);
+            run("file: NOT NULL flags survive close and reopen", PageFileTest::nullabilitySurvivesReopen);
             run("file: allocate pages", PageFileTest::allocatePages);
             run("file: written pages survive close and reopen", PageFileTest::writeAndReadBack);
             run("file: create never overwrites an existing file", PageFileTest::createRefusesToOverwrite);
@@ -93,6 +95,12 @@ public class PageFileTest {
             () -> new Schema(List.of(""), List.of("DOUBLE")), "empty name");
         expectThrows(IllegalArgumentException.class,
             () -> new Schema(List.of("a"), List.of("BOOLEAN")), "unknown type");
+        expectThrows(IllegalArgumentException.class,
+            () -> new Schema(List.of("a"), List.of("DOUBLE"), List.of(true, true)), "more nullability flags than columns");
+        expectThrows(IllegalArgumentException.class,
+            () -> new Schema(List.of("a", "b"), List.of("DOUBLE", "DOUBLE"), List.of(true)), "fewer nullability flags than columns");
+        expectThrows(IllegalArgumentException.class,
+            () -> new Schema(List.of("a", "b"), List.of("DOUBLE", "DOUBLE"), Arrays.asList(true, null)), "a missing flag");
         List<String> withNull = new ArrayList<>();
         withNull.add(null);
         expectThrows(IllegalArgumentException.class,
@@ -113,6 +121,14 @@ public class PageFileTest {
         badType[2] = 9; // first column's type code
         expectThrows(IllegalArgumentException.class,
             () -> Schema.decode(ByteBuffer.wrap(badType)), "unknown type code");
+        byte[] unknownBit = good.clone();
+        unknownBit[2] = 0x40; // a flag bit that doesn't exist
+        expectThrows(IllegalArgumentException.class,
+            () -> Schema.decode(ByteBuffer.wrap(unknownBit)), "unknown flag bit in the type byte");
+        byte[] badTypeWithFlag = good.clone();
+        badTypeWithFlag[2] = (byte) 0x82; // NOT NULL, but type code 2 doesn't exist
+        expectThrows(IllegalArgumentException.class,
+            () -> Schema.decode(ByteBuffer.wrap(badTypeWithFlag)), "unknown type code with the NOT NULL bit set");
         byte[] badLength = good.clone();
         badLength[3] = 0x7F; // first column's name length, far beyond the data
         expectThrows(IllegalArgumentException.class,
@@ -123,6 +139,54 @@ public class PageFileTest {
 
     static Schema testSchema() {
         return new Schema(List.of("id", "text"), List.of("DOUBLE", "STRING"));
+    }
+
+    static void schemaNullability() {
+        Schema all = new Schema(List.of("a", "b"), List.of("DOUBLE", "STRING"));
+        assertTrue(all.isNullable(0) && all.isNullable(1), "columns are nullable unless said otherwise");
+        assertEquals(List.of(true, true), all.columnNullability(), "default flags");
+
+        Schema mixed = new Schema(List.of("a", "b", "c"), List.of("DOUBLE", "STRING", "DOUBLE"), List.of(false, true, false));
+        assertTrue(!mixed.isNullable(0) && mixed.isNullable(1) && !mixed.isNullable(2), "per-column flags");
+        assertEquals(List.of(false, true, false), mixed.columnNullability(), "flags as a list");
+        expectThrows(UnsupportedOperationException.class, () -> mixed.columnNullability().add(true), "flags are read-only");
+
+        // Survives encoding, and takes part in equality.
+        assertEquals(mixed, Schema.decode(ByteBuffer.wrap(mixed.encode())), "encode/decode round trip");
+        assertEquals(mixed.hashCode(), Schema.decode(ByteBuffer.wrap(mixed.encode())).hashCode(), "hash code");
+        Schema sameButNullable = new Schema(List.of("a", "b", "c"), List.of("DOUBLE", "STRING", "DOUBLE"));
+        assertTrue(!mixed.equals(sameButNullable), "NOT NULL makes a different schema");
+        assertTrue(mixed.toString().contains("a DOUBLE NOT NULL") && !mixed.toString().contains("b STRING NOT NULL"),
+            "toString shows NOT NULL: " + mixed);
+
+        // The flag is the top bit of each column's type byte: 0x80 = NOT NULL.
+        // Layout: count (2 bytes), then per column type (1), name length (2), name.
+        // For columns named "a", "b", "c" those type bytes sit at offsets 2, 6 and 10.
+        byte[] encoded = mixed.encode();
+        assertEquals(0x80, encoded[2] & 0xFF, "a: DOUBLE, NOT NULL");
+        assertEquals(0x01, encoded[6] & 0xFF, "b: STRING, nullable");
+        assertEquals(0x80, encoded[10] & 0xFF, "c: DOUBLE, NOT NULL");
+        byte[] plain = sameButNullable.encode();
+        assertEquals(0x00, plain[2] & 0xFF, "nullable columns have no flag bit, same as before NULL support");
+        assertEquals(sameButNullable, Schema.decode(ByteBuffer.wrap(plain)), "so such bytes read back as all-nullable");
+
+        // Defensive copy.
+        List<Boolean> flags = new ArrayList<>(List.of(false, true));
+        Schema copy = new Schema(List.of("a", "b"), List.of("DOUBLE", "DOUBLE"), flags);
+        flags.set(0, true);
+        assertTrue(!copy.isNullable(0), "later changes to the flags list don't affect the schema");
+    }
+
+    static void nullabilitySurvivesReopen() throws IOException {
+        Schema schema = new Schema(List.of("id", "note"), List.of("DOUBLE", "STRING"), List.of(false, true));
+        Path p = dir.resolve("nullability.bonk");
+        try (PageFile f = PageFile.create(p, 512, schema)) {
+            assertEquals(schema, f.schema(), "schema as created");
+        }
+        try (PageFile f = PageFile.open(p)) {
+            assertEquals(schema, f.schema(), "schema after reopen");
+            assertTrue(!f.schema().isNullable(0) && f.schema().isNullable(1), "which column is NOT NULL survives");
+        }
     }
 
     static void createAndReopen() throws IOException {
@@ -294,6 +358,11 @@ public class PageFileTest {
         badVersion[5] = 99;
         Files.write(p, badVersion);
         expectOpenFails(p, "version", "unsupported version");
+
+        byte[] oldFormat = valid.clone();
+        ByteBuffer.wrap(oldFormat).putShort(4, (short) 1);
+        Files.write(p, oldFormat);
+        expectOpenFails(p, "unsupported format version 1", "a version 1 file (rows had no null bitmap)");
 
         byte[] tinyPageSize = valid.clone();
         ByteBuffer.wrap(tinyPageSize).putInt(6, 10);

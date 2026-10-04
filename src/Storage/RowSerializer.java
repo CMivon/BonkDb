@@ -6,18 +6,26 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
-
-//TODO: play around with the types. Need this to work with more types
 /**
- * Converts a single row to a byte array and back.
+ * Converts a single row to a byte array and back. A NULL value is a Java
+ * null in the row array.
  *
  * Needs the table's column types ("DOUBLE" or "STRING", the same strings
  * Engine.Table uses) because the bytes carry no type information of their
  * own -- the schema is the only thing that says how to read them.
  *
- * Format, column by column, in order:
- *   DOUBLE  8 bytes, big-endian IEEE 754
- *   STRING  2-byte unsigned length N, then N bytes of UTF-8
+ * Format:
+ *   null bitmap   ceil(columns / 8) bytes. Bit i (counting from the least
+ *                 significant bit of byte 0) is set if column i is NULL.
+ *                 Unused bits in the last byte must be zero.
+ *   then, for each column that is NOT null, in column order:
+ *     DOUBLE  8 bytes, big-endian IEEE 754
+ *     STRING  2-byte unsigned length N, then N bytes of UTF-8
+ *
+ * A NULL column takes no space beyond its bit in the bitmap. Every row is
+ * therefore at least one byte long, even a row where every column is NULL.
+ * (Files written before NULL support had no bitmap; that was file format
+ * version 1, which PageFile no longer reads.)
  *
  * Strings are the reason rows vary in size, which is why pages need a
  * slot array instead of fixed-width row positions.
@@ -31,7 +39,17 @@ public class RowSerializer {
 
     private RowSerializer() {}
 
+    // Serializes a row in which every column may be NULL.
     public static byte[] serialize(Object[] row, List<String> types) {
+        return serialize(row, types, null);
+    }
+
+    // Serializes a row, refusing NULL in any column the schema marks NOT NULL.
+    public static byte[] serialize(Object[] row, Schema schema) {
+        return serialize(row, schema.columnTypes(), schema);
+    }
+
+    private static byte[] serialize(Object[] row, List<String> types, Schema schema) {
         if (row.length != types.size()) {
             throw new IllegalArgumentException("Row has " + row.length + " values but the table has "
                 + types.size() + " columns");
@@ -39,13 +57,22 @@ public class RowSerializer {
 
         // First pass: validate everything and work out the exact size, so
         // nothing gets half-written if a later column turns out to be bad.
+        byte[] bitmap = new byte[bitmapBytes(row.length)];
         byte[][] encodedStrings = new byte[row.length][];
-        int size = 0;
+        int size = bitmap.length;
         for (int i = 0; i < row.length; i++) {
             Object value = row[i];
             String type = types.get(i);
+            if (!type.equals("DOUBLE") && !type.equals("STRING")) {
+                throw new IllegalArgumentException("Unknown column type: " + type);
+            }
             if (value == null) {
-                throw new IllegalArgumentException("Column " + i + " is null; NULL isn't supported");
+                if (schema != null && !schema.isNullable(i)) {
+                    throw new IllegalArgumentException("Column " + i + " ('" + schema.columnNames().get(i)
+                        + "') is NOT NULL but got NULL");
+                }
+                bitmap[i / 8] |= (byte) (1 << (i % 8));
+                continue;
             }
             if (type.equals("DOUBLE")) {
                 if (!(value instanceof Double)) {
@@ -53,7 +80,7 @@ public class RowSerializer {
                         + value.getClass().getSimpleName());
                 }
                 size += 8;
-            } else if (type.equals("STRING")) {
+            } else {
                 if (!(value instanceof String)) {
                     throw new IllegalArgumentException("Column " + i + " expects STRING, got "
                         + value.getClass().getSimpleName());
@@ -65,13 +92,15 @@ public class RowSerializer {
                 }
                 encodedStrings[i] = encoded;
                 size += 2 + encoded.length;
-            } else {
-                throw new IllegalArgumentException("Unknown column type: " + type);
             }
         }
 
         ByteBuffer buf = ByteBuffer.allocate(size); // big-endian by default
+        buf.put(bitmap);
         for (int i = 0; i < row.length; i++) {
+            if (row[i] == null) {
+                continue;
+            }
             if (types.get(i).equals("DOUBLE")) {
                 buf.putDouble((Double) row[i]);
             } else {
@@ -83,14 +112,35 @@ public class RowSerializer {
     }
 
     public static Object[] deserialize(byte[] bytes, List<String> types) {
+        int columns = types.size();
+        int bitmapLength = bitmapBytes(columns);
+        if (bytes.length < bitmapLength) {
+            throw new IllegalArgumentException("Row bytes are truncated");
+        }
+
         ByteBuffer buf = ByteBuffer.wrap(bytes);
-        Object[] row = new Object[types.size()];
+        byte[] bitmap = new byte[bitmapLength];
+        buf.get(bitmap);
+        if (columns % 8 != 0) {
+            int unusedBits = (0xFF << (columns % 8)) & 0xFF;
+            if ((bitmap[bitmapLength - 1] & unusedBits) != 0) {
+                throw new IllegalArgumentException("Null bitmap has bits set beyond the last column");
+            }
+        }
+
+        Object[] row = new Object[columns];
         try {
-            for (int i = 0; i < row.length; i++) {
+            for (int i = 0; i < columns; i++) {
                 String type = types.get(i);
+                if (!type.equals("DOUBLE") && !type.equals("STRING")) {
+                    throw new IllegalArgumentException("Unknown column type: " + type);
+                }
+                if ((bitmap[i / 8] & (1 << (i % 8))) != 0) {
+                    continue; // NULL: nothing stored, row[i] stays null
+                }
                 if (type.equals("DOUBLE")) {
                     row[i] = buf.getDouble();
-                } else if (type.equals("STRING")) {
+                } else {
                     int length = buf.getShort() & 0xFFFF;
                     if (length > buf.remaining()) {
                         throw new IllegalArgumentException("Column " + i + " claims " + length
@@ -99,8 +149,6 @@ public class RowSerializer {
                     byte[] encoded = new byte[length];
                     buf.get(encoded);
                     row[i] = new String(encoded, StandardCharsets.UTF_8);
-                } else {
-                    throw new IllegalArgumentException("Unknown column type: " + type);
                 }
             }
         } catch (BufferUnderflowException e) {
@@ -110,5 +158,10 @@ public class RowSerializer {
             throw new IllegalArgumentException(buf.remaining() + " unexpected trailing bytes after the last column");
         }
         return row;
+    }
+
+    // Size of the null bitmap for a row with this many columns.
+    private static int bitmapBytes(int columns) {
+        return (columns + 7) / 8;
     }
 }

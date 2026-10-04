@@ -1,9 +1,11 @@
+
 package Storage;
 
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -17,11 +19,16 @@ import java.util.Set;
  * The Storage package keeps its own copy of the idea rather than depending
  * on Engine.
  *
+ * Each column is either nullable (the default: it may hold NULL) or NOT NULL.
+ *
  * Encoded form (used in a PageFile's header page), all big-endian:
  *   column count            u16
- *   per column:  type code  u8   (0 = DOUBLE, 1 = STRING)
+ *   per column:  type byte  u8   low bits: 0 = DOUBLE, 1 = STRING
+ *                                bit 0x80: set means NOT NULL
  *                name length u16
  *                name        UTF-8 bytes
+ * Keeping the flag inside the type byte means a schema written before
+ * nullability existed (no flag bits set) reads back as all-nullable.
  */
 public final class Schema {
 
@@ -30,10 +37,23 @@ public final class Schema {
     public static final int MAX_COLUMNS = 65535;
     private static final int MAX_NAME_BYTES = 65535;
 
+    private static final int NOT_NULL_FLAG = 0x80;
+
     private final List<String> names;
     private final List<String> types;
+    private final List<Boolean> nullable;
 
+    // Every column nullable.
     public Schema(List<String> columnNames, List<String> columnTypes) {
+        this(columnNames, columnTypes, Collections.nCopies(columnNames.size(), Boolean.TRUE));
+    }
+
+    // columnNullable.get(i) is true if column i may hold NULL, false for NOT NULL.
+    public Schema(List<String> columnNames, List<String> columnTypes, List<Boolean> columnNullable) {
+        if (columnNullable.size() != columnNames.size()) {
+            throw new IllegalArgumentException(columnNames.size() + " column names but "
+                + columnNullable.size() + " nullability flags");
+        }
         if (columnNames.size() != columnTypes.size()) {
             throw new IllegalArgumentException(columnNames.size() + " column names but "
                 + columnTypes.size() + " types");
@@ -61,10 +81,14 @@ public final class Schema {
             if (!DOUBLE.equals(type) && !STRING.equals(type)) {
                 throw new IllegalArgumentException("Column '" + name + "' has unknown type: " + type);
             }
+            if (columnNullable.get(i) == null) {
+                throw new IllegalArgumentException("Column '" + name + "' has no nullability flag");
+            }
         }
 
         this.names = List.copyOf(columnNames);
         this.types = List.copyOf(columnTypes);
+        this.nullable = List.copyOf(columnNullable);
     }
 
     public int columnCount() {
@@ -79,6 +103,15 @@ public final class Schema {
         return types;
     }
 
+    // True if column i may hold NULL.
+    public boolean isNullable(int column) {
+        return nullable.get(column);
+    }
+
+    public List<Boolean> columnNullability() {
+        return nullable;
+    }
+
     byte[] encode() {
         byte[][] encodedNames = new byte[names.size()][];
         int size = 2;
@@ -90,7 +123,11 @@ public final class Schema {
         ByteBuffer buf = ByteBuffer.allocate(size);
         buf.putShort((short) names.size());
         for (int i = 0; i < names.size(); i++) {
-            buf.put((byte) (types.get(i).equals(DOUBLE) ? 0 : 1));
+            int typeByte = types.get(i).equals(DOUBLE) ? 0 : 1;
+            if (!nullable.get(i)) {
+                typeByte |= NOT_NULL_FLAG;
+            }
+            buf.put((byte) typeByte);
             buf.putShort((short) encodedNames[i].length);
             buf.put(encodedNames[i]);
         }
@@ -104,8 +141,11 @@ public final class Schema {
             int count = buf.getShort() & 0xFFFF;
             List<String> names = new ArrayList<>();
             List<String> types = new ArrayList<>();
+            List<Boolean> nullable = new ArrayList<>();
             for (int i = 0; i < count; i++) {
-                int code = buf.get();
+                int typeByte = buf.get() & 0xFF;
+                nullable.add((typeByte & NOT_NULL_FLAG) == 0);
+                int code = typeByte & ~NOT_NULL_FLAG;
                 if (code == 0) {
                     types.add(DOUBLE);
                 } else if (code == 1) {
@@ -122,7 +162,7 @@ public final class Schema {
                 buf.get(encoded);
                 names.add(new String(encoded, StandardCharsets.UTF_8));
             }
-            return new Schema(names, types);
+            return new Schema(names, types, nullable);
         } catch (BufferUnderflowException e) {
             throw new IllegalArgumentException("Schema bytes are truncated");
         }
@@ -133,12 +173,12 @@ public final class Schema {
         if (this == other) return true;
         if (!(other instanceof Schema)) return false;
         Schema that = (Schema) other;
-        return names.equals(that.names) && types.equals(that.types);
+        return names.equals(that.names) && types.equals(that.types) && nullable.equals(that.nullable);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(names, types);
+        return Objects.hash(names, types, nullable);
     }
 
     @Override
@@ -147,6 +187,7 @@ public final class Schema {
         for (int i = 0; i < names.size(); i++) {
             if (i > 0) sb.append(", ");
             sb.append(names.get(i)).append(' ').append(types.get(i));
+            if (!nullable.get(i)) sb.append(" NOT NULL");
         }
         return sb.append(')').toString();
     }
