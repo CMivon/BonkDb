@@ -314,7 +314,8 @@ public class Page {
         }
     }
 
-    private static void checkPageSize(int size) {
+    // Package-private so PageFile can validate a requested page size the same way.
+    static void checkPageSize(int size) {
         if (size < MIN_SIZE || size > MAX_SIZE) {
             throw new IllegalArgumentException("Page size " + size + " must be between " + MIN_SIZE
                 + " and " + MAX_SIZE);

@@ -1,5 +1,7 @@
 package Storage;
 
+import static Storage.TestKit.*;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -14,10 +16,12 @@ import java.util.Random;
  */
 public class StorageTest {
 
-    private static int passed = 0;
-    private static int failed = 0;
-
     public static void main(String[] args) {
+        runAll();
+        TestKit.finish();
+    }
+
+    static void runAll() {
         run("serializer: round trip", StorageTest::serializerRoundTrip);
         run("serializer: special doubles and unicode", StorageTest::serializerSpecialValues);
         run("serializer: rejects bad input", StorageTest::serializerRejectsBadInput);
@@ -32,12 +36,6 @@ public class StorageTest {
         run("page: detects corruption", StorageTest::pageDetectsCorruption);
         run("page: randomized stress vs a model", StorageTest::randomizedStress);
         run("rows serialized into pages and read back", StorageTest::rowsInPages);
-
-        System.out.println();
-        System.out.println(passed + " passed, " + failed + " failed");
-        if (failed > 0) {
-            System.exit(1);
-        }
     }
 
     // ---------- Serializer tests ----------
@@ -456,46 +454,5 @@ public class StorageTest {
     private static void setU16(byte[] bytes, int pos, int value) {
         bytes[pos] = (byte) (value >>> 8);
         bytes[pos + 1] = (byte) value;
-    }
-
-    private interface Check {
-        void run() throws Exception;
-    }
-
-    private static void run(String name, Check check) {
-        try {
-            check.run();
-            passed++;
-            System.out.println("PASS  " + name);
-        } catch (Throwable t) {
-            failed++;
-            System.out.println("FAIL  " + name + "  ->  " + t);
-            for (StackTraceElement frame : t.getStackTrace()) {
-                if (frame.getClassName().startsWith("Storage.")) {
-                    System.out.println("        at " + frame);
-                    break;
-                }
-            }
-        }
-    }
-
-    private static void assertTrue(boolean condition, String message) {
-        if (!condition) throw new AssertionError(message);
-    }
-
-    private static void assertEquals(Object expected, Object actual, String message) {
-        if (!expected.equals(actual)) {
-            throw new AssertionError(message + ": expected " + expected + " but got " + actual);
-        }
-    }
-
-    private static void expectThrows(Class<? extends Throwable> type, Check check, String message) {
-        try {
-            check.run();
-        } catch (Throwable t) {
-            if (type.isInstance(t)) return;
-            throw new AssertionError(message + ": expected " + type.getSimpleName() + " but got " + t);
-        }
-        throw new AssertionError(message + ": expected " + type.getSimpleName() + " but nothing was thrown");
     }
 }
