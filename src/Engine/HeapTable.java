@@ -1,3 +1,4 @@
+
 package Engine;
 
 import Storage.HeapFile;
@@ -160,6 +161,11 @@ public class HeapTable extends Table {
             throw new IllegalArgumentException("Row needs " + bytes.length + " bytes but a " + heap.pageSize()
                 + "-byte page holds at most " + heap.maxRowSize() + " per row (rows can't span pages)");
         }
+    }
+
+    @Override
+    void flush() throws IOException {
+        heap.flush();
     }
 
     @Override

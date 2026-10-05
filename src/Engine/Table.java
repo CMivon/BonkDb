@@ -1,3 +1,4 @@
+
 package Engine;
 
 import java.io.*;
@@ -89,6 +90,11 @@ public abstract class Table {
     // Stores a row that insert() has already validated. Implementations must
     // not keep the caller's array.
     abstract void store(Object[] values);
+
+    // Makes sure everything written so far has reached the disk, so it survives
+    // the program being killed. Does nothing for a table in memory.
+    void flush() throws IOException {
+    }
 
     // Releases whatever the table holds open (a file, for a stored table).
     // Does nothing for a table in memory.

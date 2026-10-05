@@ -1,3 +1,4 @@
+
 package Engine;
 
 /**
@@ -15,6 +16,7 @@ public class RunEngineTests {
         TableTests.runAll();
         TableContractTests.runAll();
         HeapTableTests.runAll();
+        CatalogTests.runAll();
         CliTests.runAll();
 
         // The SQL-level tests again, with every CREATE TABLE making a table stored
