@@ -1,23 +1,42 @@
+
 package Engine;
 
-import java.util.*;
 import java.io.*;
+import java.util.*;
+import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 /**
- * In-memory table representation with simple text-file persistence.
- * Stands in for a real storage engine (pages, buffer pool, B+ trees) --
- * this is the layer everything else (parser, executor) talks to.
+ * A table: a name, an ordered list of columns (optionally with declared
+ * types), and rows. This class holds what every kind of table has in common;
+ * where the rows actually live is up to the subclass. Today that is
+ * MemoryTable. A table backed by a file can be added beside it without the
+ * executor or the CLI having to change, because they only use what is
+ * declared here.
+ *
+ * Nothing outside a table should reach into its rows. Everything the engine
+ * does to rows goes through the five operations below:
+ *
+ *   scan()         read every row
+ *   insert(...)    add a row (validated against the declared types, if any)
+ *   deleteWhere    remove the rows a predicate selects
+ *   updateWhere    replace the rows a predicate selects
+ *   rowCount()     how many rows there are
+ *
+ * Rows are Object[] values in column order (Doubles and Strings).
+ *
+ * The text-file format (save/load) lives here too, since it is written in
+ * terms of those operations and works for any kind of table.
  */
-public class Table {
+public abstract class Table {
     final String name;
     final List<String> columns;
     // Declared column types ("DOUBLE"/"STRING"), parallel to columns -- null
     // when a table was built without an explicit schema (the old behavior:
     // types get *inferred* from the first row instead, see inferTypes()).
-    // CREATE TABLE always supplies this; ad-hoc Tables built directly in Java
+    // CREATE TABLE always supplies this; ad-hoc tables built directly in Java
     // (as in Test.java) generally don't.
     final List<String> types;
-    final List<Object[]> rows = new ArrayList<>();
     final Map<String, Integer> columnIndex = new HashMap<>();
 
     Table(String name, List<String> columns) {
@@ -36,12 +55,58 @@ public class Table {
         }
     }
 
-    void insert(Object... values) {
+    // ---------- Row operations: each kind of table provides these ----------
+
+    // The number of rows.
+    abstract int rowCount();
+
+    boolean isEmpty() {
+        return rowCount() == 0;
+    }
+
+    // Every row, in the table's own order. The arrays that come back belong to
+    // the table: callers must treat them as read-only (copy one before
+    // changing it). Changing the table while a scan is in progress is not
+    // allowed; DELETE and UPDATE use deleteWhere/updateWhere for that reason.
+    abstract Iterable<Object[]> scan();
+
+    // Deletes every row for which matches returns true, and returns how many
+    // that was. The predicate is applied to every row before anything is
+    // deleted, so if it throws, the table is left exactly as it was.
+    abstract int deleteWhere(Predicate<Object[]> matches);
+
+    // Replaces every row for which matches returns true with change.apply(row),
+    // and returns how many were replaced. change must return a new array (it is
+    // given a row it must not modify). Both functions are applied to every
+    // selected row before any row is replaced, so if either throws, the table
+    // is left exactly as it was. A table in memory keeps each row's position;
+    // a table stored in a file does too unless a grown row no longer fits where
+    // it was, in which case it moves. Whether a new row's values are checked
+    // against the column types depends on the kind of table: a MemoryTable
+    // doesn't check (the caller does, see executeUpdate); a HeapTable refuses
+    // a row its file can't hold, and in that case changes nothing.
+    abstract int updateWhere(Predicate<Object[]> matches, UnaryOperator<Object[]> change);
+
+    // Stores a row that insert() has already validated. Implementations must
+    // not keep the caller's array.
+    abstract void store(Object[] values);
+
+    // Makes sure everything written so far has reached the disk, so it survives
+    // the program being killed. Does nothing for a table in memory.
+    void flush() throws IOException {
+    }
+
+    // Releases whatever the table holds open (a file, for a stored table).
+    // Does nothing for a table in memory.
+    void close() throws IOException {
+    }
+
+    final void insert(Object... values) {
         if (values.length != columns.size()) {
             throw new RuntimeException("Column count mismatch for table " + name);
         }
         // Only tables with a declared schema (from CREATE TABLE) get validated --
-        // ad-hoc Tables built directly in Java have no schema to check against.
+        // ad-hoc tables built directly in Java have no schema to check against.
         if (types != null) {
             for (int i = 0; i < values.length; i++) {
                 boolean ok = types.get(i).equals("DOUBLE")
@@ -54,8 +119,10 @@ public class Table {
                 }
             }
         }
-        rows.add(values);
+        store(values);
     }
+
+    // ---------- Finding columns ----------
 
     int indexOf(String column) {
         Integer idx = columnIndex.get(column);
@@ -103,7 +170,7 @@ public class Table {
             w.newLine();
             w.write("ROWS");
             w.newLine();
-            for (Object[] row : rows) {
+            for (Object[] row : scan()) {
                 StringBuilder line = new StringBuilder();
                 for (int i = 0; i < row.length; i++) {
                     if (i > 0) line.append(",");
@@ -115,7 +182,8 @@ public class Table {
         }
     }
 
-    static Table load(String path) throws IOException {
+    // Reads a table from the text format. The result is always an in-memory table.
+    static MemoryTable load(String path) throws IOException {
         try (BufferedReader r = new BufferedReader(new FileReader(path))) {
             String tableLine = r.readLine(); // "TABLE <name>"
             String tableName = tableLine.substring("TABLE ".length()).trim();
@@ -128,7 +196,7 @@ public class Table {
 
             r.readLine(); // "ROWS" marker, discard
 
-            Table table = new Table(tableName, new ArrayList<>(cols), new ArrayList<>(types));
+            MemoryTable table = new MemoryTable(tableName, new ArrayList<>(cols), new ArrayList<>(types));
             String line;
             while ((line = r.readLine()) != null) {
                 if (line.isEmpty()) continue;
@@ -138,24 +206,28 @@ public class Table {
                     String raw = unescape(fields[i]);
                     values[i] = types.get(i).equals("DOUBLE") ? (Object) Double.parseDouble(raw) : (Object) raw;
                 }
-                table.rows.add(values);
+                table.append(values);
             }
             return table;
         }
     }
 
-	//TODO: I don't really like infering Types. Maybe throw an error wherever this is needed instead?
     private List<String> inferTypes() {
         if (types != null) {
             return types; // declared schema (from CREATE TABLE) always wins
         }
-        // No declared schema (an ad-hoc Table): fall back to guessing from
+        // No declared schema (an ad-hoc table): fall back to guessing from
         // the first row, as before. Note this guesses "STRING" for a table
         // that's still empty -- another reason CREATE TABLE tables carry
         // their real types explicitly instead of relying on this.
+        Object[] first = null;
+        for (Object[] row : scan()) {
+            first = row;
+            break;
+        }
         List<String> inferred = new ArrayList<>();
         for (int i = 0; i < columns.size(); i++) {
-            if (!rows.isEmpty() && rows.get(0)[i] instanceof Double) {
+            if (first != null && first[i] instanceof Double) {
                 inferred.add("DOUBLE");
             } else {
                 inferred.add("STRING");
