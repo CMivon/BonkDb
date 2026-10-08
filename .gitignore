@@ -1,0 +1,6 @@
+# Compiled output
+out/
+*.class
+
+# Database folders created by running the shell
+bonkdb-data/
