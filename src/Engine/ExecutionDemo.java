@@ -313,6 +313,17 @@ public class ExecutionDemo {
             table = join(table, leftLabel, right, rightLabel, join.on);
             leftLabel = null; // the combined table's columns are already qualified; later joins keep them as they are
         }
+        // "FROM users AS u" with no JOIN: run the query on a copy named after the
+        // alias. Table.indexOfColumn accepts a qualifier equal to the table's own
+        // name, so "u.name" then resolves and "users.name" no longer does, as in
+        // standard SQL. Unqualified column names keep working.
+        if (stmt.joins.isEmpty() && stmt.tableAlias != null) {
+            MemoryTable aliased = new MemoryTable(stmt.tableAlias, base.columns);
+            for (Object[] row : base.scan()) {
+                aliased.append(row);
+            }
+            table = aliased;
+        }
 
         // 2. Scan + filter (keep full rows -- both ORDER BY and GROUP BY may
         //    reference columns that aren't in the SELECT list, so we can't

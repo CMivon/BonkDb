@@ -49,7 +49,7 @@ public class QueryTests {
         run("QUIRK: errors only surface when a row is examined", QueryTests::quirkErrorsNeedRows);
         run("QUIRK: arithmetic parses but fails at run time", QueryTests::quirkArithmetic);
         run("join: three tables", QueryTests::threeTableJoin);
-        run("KNOWN BUG: an alias on a lone table can't be used", QueryTests::bugAliasWithoutJoin);
+        run("alias: on a single table", QueryTests::aliasWithoutJoin);
         run("LIMITATION: unqualified columns after a join", QueryTests::limitationUnqualifiedAfterJoin);
     }
 
@@ -612,18 +612,23 @@ public class QueryTests {
             + "JOIN items ON orders.nope = items.order_id", "Unknown column 'orders.nope'");
     }
 
-    // KNOWN BUG: the parser accepts "FROM users AS u" with no JOIN, and
-    // "SELECT u.name" is the natural thing to write after it, but the alias is
-    // only wired up for joins. Referring to the alias fails, and referring to
-    // the real table name (which standard SQL would reject) is what works.
-    // When this is fixed, "u.name" should work and "users.name" should fail.
-    static void bugAliasWithoutJoin() {
+    // "FROM users AS u" with no JOIN: the alias names the table in every clause,
+    // and the real table name stops working, as in standard SQL. (This used to
+    // be the other way round: "u.name" failed and "users.name" worked.)
+    static void aliasWithoutJoin() {
         TestDb db = TestDb.withSampleData();
-        db.expectError("SELECT u.name FROM users AS u", "Unknown column 'u.name' in table users");
-        db.expectError("SELECT name FROM users AS u WHERE u.age > 20", "Unknown column 'u.age'");
-        // Unqualified names, and the real table name, are what work today.
+        db.assertRows("SELECT u.name FROM users AS u", r("Alice"), r("Bob"), r("Carol"));
+        db.assertColumns("SELECT u.name FROM users AS u", "u.name");
+        db.assertRows("SELECT name FROM users AS u WHERE u.age > 20", r("Alice"), r("Carol"));
+        db.assertRows("SELECT u.name FROM users AS u WHERE u.age > 20 ORDER BY u.age DESC", r("Carol"), r("Alice"));
+        db.assertRows("SELECT u.name FROM users AS u ORDER BY u.age LIMIT 1", r("Bob"));
+        db.assertRows("SELECT COUNT(*) FROM users AS u WHERE u.age > 20", r(2.0));
+        db.assertColumns("SELECT * FROM users AS u", "id", "name", "age");
+        // Unqualified names still work.
         db.assertRows("SELECT name FROM users AS u WHERE age > 20", r("Alice"), r("Carol"));
-        db.assertRows("SELECT users.name FROM users AS u WHERE users.age > 40", r("Carol"));
+        // The real table name no longer does.
+        db.expectError("SELECT users.name FROM users AS u", "Unknown column 'users.name'");
+        db.expectError("SELECT name FROM users AS u WHERE users.age > 40", "Unknown column 'users.age'");
     }
 
     // LIMITATION: in real SQL an unambiguous column name needs no qualifier
