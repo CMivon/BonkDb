@@ -48,8 +48,8 @@ public class QueryTests {
         run("gimmick: ORDER BY CHAOS", QueryTests::chaos);
         run("QUIRK: errors only surface when a row is examined", QueryTests::quirkErrorsNeedRows);
         run("QUIRK: arithmetic parses but fails at run time", QueryTests::quirkArithmetic);
-        run("KNOWN BUG: joining three or more tables fails", QueryTests::bugThreeTableJoin);
-        run("KNOWN BUG: an alias on a lone table can't be used", QueryTests::bugAliasWithoutJoin);
+        run("join: three tables", QueryTests::threeTableJoin);
+        run("alias: on a single table", QueryTests::aliasWithoutJoin);
         run("LIMITATION: unqualified columns after a join", QueryTests::limitationUnqualifiedAfterJoin);
     }
 
@@ -574,48 +574,61 @@ public class QueryTests {
         db.expectError("SELECT name FROM users WHERE age + 1 > 30", "Expected EOF");
     }
 
-    // KNOWN BUG: a query with two or more JOINs always fails, even when every
-    // name is spelled correctly. After the first join the combined table is
-    // labelled with a made-up name ("users_JOIN_orders"), and the second join
-    // then re-labels the columns it already labelled, so references like
-    // "orders.id" can no longer be found.
-    // When this is fixed, change the expectations below to the correct results.
-    static void bugThreeTableJoin() {
+    // Joining three tables. Each join's result keeps its columns qualified by
+    // the original table names, so a later ON, WHERE or SELECT can still name a
+    // table from an EARLIER join. (This used to fail: the second join
+    // re-labelled columns the first join had already labelled, so "orders.id"
+    // could no longer be found.)
+    static void threeTableJoin() {
         TestDb db = TestDb.withSampleData();
         db.exec("CREATE TABLE items (order_id INT, sku TEXT)");
         db.exec("INSERT INTO items VALUES (100, 'nail')");
         db.exec("INSERT INTO items VALUES (102, 'screw')");
 
-        // A single join is fine...
+        // A single join.
         db.assertRows("SELECT orders.id, items.sku FROM orders JOIN items ON orders.id = items.order_id",
             r(100.0, "nail"), r(102.0, "screw"));
-        // ...but chaining a second one fails. The CORRECT result would be:
-        //   [Alice, nail], [Carol, screw]
-        db.expectError("SELECT users.name, items.sku FROM users JOIN orders ON users.id = orders.user_id "
-            + "JOIN items ON orders.id = items.order_id", "Unknown column 'orders.id' in table users_JOIN_orders_JOIN_items");
-        db.expectError("SELECT * FROM users JOIN orders ON users.id = orders.user_id JOIN items ON orders.id = items.order_id",
-            "Unknown column");
-        // The bug is specifically about naming a table from an EARLIER join. A
-        // second join that only names the newest table works...
+        // Chaining a second one, with the ON naming a table from the first join.
+        db.assertRows("SELECT users.name, items.sku FROM users JOIN orders ON users.id = orders.user_id "
+            + "JOIN items ON orders.id = items.order_id", r("Alice", "nail"), r("Carol", "screw"));
+        // A column from the middle table can be selected too.
+        db.assertRows("SELECT users.name, orders.total, items.sku FROM users JOIN orders ON users.id = orders.user_id "
+            + "JOIN items ON orders.id = items.order_id", r("Alice", 75.0, "nail"), r("Carol", 60.0, "screw"));
+        // SELECT * keeps every column of every table, in join order.
+        db.assertColumns("SELECT * FROM users JOIN orders ON users.id = orders.user_id JOIN items ON orders.id = items.order_id",
+            "users.id", "users.name", "users.age", "orders.id", "orders.user_id", "orders.total",
+            "items.order_id", "items.sku");
+        // WHERE can name any of the three tables.
+        db.assertRows("SELECT users.name, items.sku FROM users JOIN orders ON users.id = orders.user_id "
+            + "JOIN items ON orders.id = items.order_id WHERE orders.total > 70", r("Alice", "nail"));
+        // A second join whose ON only names the newest table keeps working,
         db.assertRows("SELECT items.sku FROM users JOIN orders ON users.id = orders.user_id JOIN items ON items.order_id = 100",
             r("nail"), r("nail"), r("nail"));
-        // ...but naming an earlier table anywhere (here, in the SELECT list) fails.
-        db.expectError("SELECT users.name FROM users JOIN orders ON users.id = orders.user_id JOIN items ON items.order_id = 100",
-            "Unknown column 'users.name'");
+        // and so does naming an earlier table in the SELECT list.
+        db.assertRows("SELECT users.name FROM users JOIN orders ON users.id = orders.user_id JOIN items ON items.order_id = 100",
+            r("Alice"), r("Alice"), r("Carol"));
+        // A misspelled column is still reported.
+        db.expectError("SELECT users.name FROM users JOIN orders ON users.id = orders.user_id "
+            + "JOIN items ON orders.nope = items.order_id", "Unknown column 'orders.nope'");
     }
 
-    // KNOWN BUG: the parser accepts "FROM users AS u" with no JOIN, and
-    // "SELECT u.name" is the natural thing to write after it, but the alias is
-    // only wired up for joins. Referring to the alias fails, and referring to
-    // the real table name (which standard SQL would reject) is what works.
-    // When this is fixed, "u.name" should work and "users.name" should fail.
-    static void bugAliasWithoutJoin() {
+    // "FROM users AS u" with no JOIN: the alias names the table in every clause,
+    // and the real table name stops working, as in standard SQL. (This used to
+    // be the other way round: "u.name" failed and "users.name" worked.)
+    static void aliasWithoutJoin() {
         TestDb db = TestDb.withSampleData();
-        db.expectError("SELECT u.name FROM users AS u", "Unknown column 'u.name' in table users");
-        db.expectError("SELECT name FROM users AS u WHERE u.age > 20", "Unknown column 'u.age'");
-        // Unqualified names, and the real table name, are what work today.
+        db.assertRows("SELECT u.name FROM users AS u", r("Alice"), r("Bob"), r("Carol"));
+        db.assertColumns("SELECT u.name FROM users AS u", "u.name");
+        db.assertRows("SELECT name FROM users AS u WHERE u.age > 20", r("Alice"), r("Carol"));
+        db.assertRows("SELECT u.name FROM users AS u WHERE u.age > 20 ORDER BY u.age DESC", r("Carol"), r("Alice"));
+        db.assertRows("SELECT u.name FROM users AS u ORDER BY u.age LIMIT 1", r("Bob"));
+        db.assertRows("SELECT COUNT(*) FROM users AS u WHERE u.age > 20", r(2.0));
+        db.assertColumns("SELECT * FROM users AS u", "id", "name", "age");
+        // Unqualified names still work.
         db.assertRows("SELECT name FROM users AS u WHERE age > 20", r("Alice"), r("Carol"));
-        db.assertRows("SELECT users.name FROM users AS u WHERE users.age > 40", r("Carol"));
+        // The real table name no longer does.
+        db.expectError("SELECT users.name FROM users AS u", "Unknown column 'users.name'");
+        db.expectError("SELECT name FROM users AS u WHERE users.age > 40", "Unknown column 'users.age'");
     }
 
     // LIMITATION: in real SQL an unambiguous column name needs no qualifier
