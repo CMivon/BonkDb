@@ -69,12 +69,12 @@ public class TableTests {
         return Files.readString(java.nio.file.Paths.get(file)).replace("\r\n", "\n");
     }
 
-    private static MiniParser.Column col(String name) {
-        return new MiniParser.Column(name);
+    private static BonkParser.Column col(String name) {
+        return new BonkParser.Column(name);
     }
 
-    private static MiniParser.Column col(String table, String name) {
-        return new MiniParser.Column(table, name);
+    private static BonkParser.Column col(String table, String name) {
+        return new BonkParser.Column(table, name);
     }
 
     // Saves the table, loads it back, and checks every row matches.

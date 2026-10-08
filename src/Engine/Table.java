@@ -136,7 +136,7 @@ public abstract class Table {
     // a JOIN's virtual table, or a plain "age" from a single table). Falls back
     // to the unqualified name when the qualifier is just this table's own name,
     // so "users.age" still works against a table whose columns aren't prefixed.
-    int indexOfColumn(MiniParser.Column col) {
+    int indexOfColumn(BonkParser.Column col) {
         if (col.table != null) {
             String qualified = col.table + "." + col.name;
             if (columnIndex.containsKey(qualified)) {

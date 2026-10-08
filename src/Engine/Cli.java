@@ -105,33 +105,33 @@ public class Cli {
     static void runStatement(String sql, Catalog catalog) {
         Map<String, Table> tables = catalog.tables();
         try {
-            MiniParser.Stmt stmt = MiniParser.parseSql(sql);
-            if (stmt instanceof MiniParser.SelectStmt) {
-                MiniParser.SelectStmt selectStmt = (MiniParser.SelectStmt) stmt;
+            BonkParser.Stmt stmt = BonkParser.parseSql(sql);
+            if (stmt instanceof BonkParser.SelectStmt) {
+                BonkParser.SelectStmt selectStmt = (BonkParser.SelectStmt) stmt;
                 if (selectStmt.chaos) {
                     System.out.println("bonk! shuffling results into chaos...");
                 }
-                ExecutionDemo.QueryResult result = ExecutionDemo.executeSelect(selectStmt, tables);
+                Executor.QueryResult result = Executor.executeSelect(selectStmt, tables);
                 printTable(result);
-            } else if (stmt instanceof MiniParser.CreateTableStmt) {
-                MiniParser.CreateTableStmt createStmt = (MiniParser.CreateTableStmt) stmt;
-                ExecutionDemo.executeCreateTable(createStmt, tables, catalog.factory());
+            } else if (stmt instanceof BonkParser.CreateTableStmt) {
+                BonkParser.CreateTableStmt createStmt = (BonkParser.CreateTableStmt) stmt;
+                Executor.executeCreateTable(createStmt, tables, catalog.factory());
                 flush(tables.get(createStmt.table));
                 System.out.println("Table '" + createStmt.table + "' created.");
-            } else if (stmt instanceof MiniParser.InsertStmt) {
-                MiniParser.InsertStmt insertStmt = (MiniParser.InsertStmt) stmt;
-                ExecutionDemo.executeInsert(insertStmt, tables);
+            } else if (stmt instanceof BonkParser.InsertStmt) {
+                BonkParser.InsertStmt insertStmt = (BonkParser.InsertStmt) stmt;
+                Executor.executeInsert(insertStmt, tables);
                 flush(tables.get(insertStmt.table));
                 System.out.println("1 row inserted into '" + insertStmt.table + "'.");
-            } else if (stmt instanceof MiniParser.DeleteStmt) {
-                MiniParser.DeleteStmt deleteStmt = (MiniParser.DeleteStmt) stmt;
-                int deleted = ExecutionDemo.executeDelete(deleteStmt, tables);
+            } else if (stmt instanceof BonkParser.DeleteStmt) {
+                BonkParser.DeleteStmt deleteStmt = (BonkParser.DeleteStmt) stmt;
+                int deleted = Executor.executeDelete(deleteStmt, tables);
                 flush(tables.get(deleteStmt.table));
                 System.out.println(deleted + " row" + (deleted == 1 ? "" : "s") + " bonked out of '"
                     + deleteStmt.table + "'.");
-            } else if (stmt instanceof MiniParser.UpdateStmt) {
-                MiniParser.UpdateStmt updateStmt = (MiniParser.UpdateStmt) stmt;
-                int updated = ExecutionDemo.executeUpdate(updateStmt, tables);
+            } else if (stmt instanceof BonkParser.UpdateStmt) {
+                BonkParser.UpdateStmt updateStmt = (BonkParser.UpdateStmt) stmt;
+                int updated = Executor.executeUpdate(updateStmt, tables);
                 flush(tables.get(updateStmt.table));
                 System.out.println(updated + " row" + (updated == 1 ? "" : "s") + " bonked into shape in '"
                     + updateStmt.table + "'.");
@@ -152,7 +152,7 @@ public class Cli {
         }
     }
 
-    static void printTable(ExecutionDemo.QueryResult result) {
+    static void printTable(Executor.QueryResult result) {
         if (result.rows.isEmpty()) {
             System.out.println("(0 rows) -- columns: " + result.columns);
             return;

@@ -81,23 +81,23 @@ final class TestDb {
     // Runs any statement. Returns a QueryResult for SELECT, or the number of
     // rows affected for everything else (CREATE counts as 0, INSERT as 1).
     private Object run(String sql) {
-        MiniParser.Stmt stmt = MiniParser.parseSql(sql);
-        if (stmt instanceof MiniParser.SelectStmt) {
-            return ExecutionDemo.executeSelect((MiniParser.SelectStmt) stmt, catalog);
+        BonkParser.Stmt stmt = BonkParser.parseSql(sql);
+        if (stmt instanceof BonkParser.SelectStmt) {
+            return Executor.executeSelect((BonkParser.SelectStmt) stmt, catalog);
         }
-        if (stmt instanceof MiniParser.CreateTableStmt) {
-            ExecutionDemo.executeCreateTable((MiniParser.CreateTableStmt) stmt, catalog, factory);
+        if (stmt instanceof BonkParser.CreateTableStmt) {
+            Executor.executeCreateTable((BonkParser.CreateTableStmt) stmt, catalog, factory);
             return 0;
         }
-        if (stmt instanceof MiniParser.InsertStmt) {
-            ExecutionDemo.executeInsert((MiniParser.InsertStmt) stmt, catalog);
+        if (stmt instanceof BonkParser.InsertStmt) {
+            Executor.executeInsert((BonkParser.InsertStmt) stmt, catalog);
             return 1;
         }
-        if (stmt instanceof MiniParser.DeleteStmt) {
-            return ExecutionDemo.executeDelete((MiniParser.DeleteStmt) stmt, catalog);
+        if (stmt instanceof BonkParser.DeleteStmt) {
+            return Executor.executeDelete((BonkParser.DeleteStmt) stmt, catalog);
         }
-        if (stmt instanceof MiniParser.UpdateStmt) {
-            return ExecutionDemo.executeUpdate((MiniParser.UpdateStmt) stmt, catalog);
+        if (stmt instanceof BonkParser.UpdateStmt) {
+            return Executor.executeUpdate((BonkParser.UpdateStmt) stmt, catalog);
         }
         throw new IllegalStateException("Test helper doesn't know how to run " + stmt);
     }
@@ -105,18 +105,18 @@ final class TestDb {
     // Runs a non-SELECT statement and returns how many rows it affected.
     int exec(String sql) {
         Object result = run(sql);
-        if (result instanceof ExecutionDemo.QueryResult) {
+        if (result instanceof Executor.QueryResult) {
             throw new IllegalArgumentException("exec() is for statements that change data; use query()/rows(): " + sql);
         }
         return (Integer) result;
     }
 
-    ExecutionDemo.QueryResult query(String sql) {
+    Executor.QueryResult query(String sql) {
         Object result = run(sql);
-        if (!(result instanceof ExecutionDemo.QueryResult)) {
+        if (!(result instanceof Executor.QueryResult)) {
             throw new IllegalArgumentException("query() is for SELECT statements: " + sql);
         }
-        return (ExecutionDemo.QueryResult) result;
+        return (Executor.QueryResult) result;
     }
 
     // The rows of a SELECT, each as a list of values (numbers are Doubles).
