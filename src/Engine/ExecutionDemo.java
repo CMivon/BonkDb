@@ -139,10 +139,13 @@ public class ExecutionDemo {
     // colliding in the same lookup map.
     static Table join(Table left, String leftLabel, Table right, String rightLabel, MiniParser.Expr on) {
         List<String> combinedColumns = new ArrayList<>();
-        for (String c : left.columns) combinedColumns.add(leftLabel + "." + c);
+        // A null leftLabel means the left side is itself a join result, whose
+        // columns are already qualified ("users.id"); prefixing them again would
+        // hide them from any later reference to an earlier table.
+        for (String c : left.columns) combinedColumns.add(leftLabel == null ? c : leftLabel + "." + c);
         for (String c : right.columns) combinedColumns.add(rightLabel + "." + c);
 
-        MemoryTable joined = new MemoryTable(leftLabel + "_JOIN_" + rightLabel, combinedColumns);
+        MemoryTable joined = new MemoryTable((leftLabel == null ? left.name : leftLabel) + "_JOIN_" + rightLabel, combinedColumns);
 
         // Read the right-hand side once, up front, rather than once per left
         // row. For an in-memory table that makes no difference, but for a table
@@ -308,7 +311,7 @@ public class ExecutionDemo {
             }
             String rightLabel = join.alias != null ? join.alias : join.table;
             table = join(table, leftLabel, right, rightLabel, join.on);
-            leftLabel = table.name; // further chained joins qualify against the combined table's own name, as before
+            leftLabel = null; // the combined table's columns are already qualified; later joins keep them as they are
         }
 
         // 2. Scan + filter (keep full rows -- both ORDER BY and GROUP BY may
