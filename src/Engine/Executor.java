@@ -13,7 +13,7 @@ import java.util.*;
  * This is the seed you'll later refactor into an iterator/Volcano model
  * once you add more JOIN strategies.
  */
-public class ExecutionDemo {
+public class Executor {
 
     // A query's results, paired with the display names of its output columns
     // (e.g. "name", "users.id", "COUNT(*)") -- callers like the CLI need
