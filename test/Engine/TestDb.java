@@ -83,21 +83,21 @@ final class TestDb {
     private Object run(String sql) {
         BonkParser.Stmt stmt = BonkParser.parseSql(sql);
         if (stmt instanceof BonkParser.SelectStmt) {
-            return ExecutionDemo.executeSelect((BonkParser.SelectStmt) stmt, catalog);
+            return Executor.executeSelect((BonkParser.SelectStmt) stmt, catalog);
         }
         if (stmt instanceof BonkParser.CreateTableStmt) {
-            ExecutionDemo.executeCreateTable((BonkParser.CreateTableStmt) stmt, catalog, factory);
+            Executor.executeCreateTable((BonkParser.CreateTableStmt) stmt, catalog, factory);
             return 0;
         }
         if (stmt instanceof BonkParser.InsertStmt) {
-            ExecutionDemo.executeInsert((BonkParser.InsertStmt) stmt, catalog);
+            Executor.executeInsert((BonkParser.InsertStmt) stmt, catalog);
             return 1;
         }
         if (stmt instanceof BonkParser.DeleteStmt) {
-            return ExecutionDemo.executeDelete((BonkParser.DeleteStmt) stmt, catalog);
+            return Executor.executeDelete((BonkParser.DeleteStmt) stmt, catalog);
         }
         if (stmt instanceof BonkParser.UpdateStmt) {
-            return ExecutionDemo.executeUpdate((BonkParser.UpdateStmt) stmt, catalog);
+            return Executor.executeUpdate((BonkParser.UpdateStmt) stmt, catalog);
         }
         throw new IllegalStateException("Test helper doesn't know how to run " + stmt);
     }
@@ -105,18 +105,18 @@ final class TestDb {
     // Runs a non-SELECT statement and returns how many rows it affected.
     int exec(String sql) {
         Object result = run(sql);
-        if (result instanceof ExecutionDemo.QueryResult) {
+        if (result instanceof Executor.QueryResult) {
             throw new IllegalArgumentException("exec() is for statements that change data; use query()/rows(): " + sql);
         }
         return (Integer) result;
     }
 
-    ExecutionDemo.QueryResult query(String sql) {
+    Executor.QueryResult query(String sql) {
         Object result = run(sql);
-        if (!(result instanceof ExecutionDemo.QueryResult)) {
+        if (!(result instanceof Executor.QueryResult)) {
             throw new IllegalArgumentException("query() is for SELECT statements: " + sql);
         }
-        return (ExecutionDemo.QueryResult) result;
+        return (Executor.QueryResult) result;
     }
 
     // The rows of a SELECT, each as a list of values (numbers are Doubles).
