@@ -1,7 +1,0 @@
-TABLE users
-COLUMNS id,name,age
-TYPES DOUBLE,STRING,DOUBLE
-ROWS
-1.0,Alice,30.0
-2.0,Bob,17.0
-3.0,Carol,45.0
