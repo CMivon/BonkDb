@@ -56,7 +56,7 @@ public class CatalogTests {
 
     // Runs a CREATE TABLE statement the way the CLI does: through the executor, with the catalog's factory.
     private static void create(Catalog catalog, String sql) {
-        ExecutionDemo.executeCreateTable((MiniParser.CreateTableStmt) MiniParser.parseSql(sql), catalog.tables(), catalog.factory());
+        ExecutionDemo.executeCreateTable((BonkParser.CreateTableStmt) BonkParser.parseSql(sql), catalog.tables(), catalog.factory());
     }
 
     private static List<String> names(Catalog catalog) {

@@ -81,23 +81,23 @@ final class TestDb {
     // Runs any statement. Returns a QueryResult for SELECT, or the number of
     // rows affected for everything else (CREATE counts as 0, INSERT as 1).
     private Object run(String sql) {
-        MiniParser.Stmt stmt = MiniParser.parseSql(sql);
-        if (stmt instanceof MiniParser.SelectStmt) {
-            return ExecutionDemo.executeSelect((MiniParser.SelectStmt) stmt, catalog);
+        BonkParser.Stmt stmt = BonkParser.parseSql(sql);
+        if (stmt instanceof BonkParser.SelectStmt) {
+            return ExecutionDemo.executeSelect((BonkParser.SelectStmt) stmt, catalog);
         }
-        if (stmt instanceof MiniParser.CreateTableStmt) {
-            ExecutionDemo.executeCreateTable((MiniParser.CreateTableStmt) stmt, catalog, factory);
+        if (stmt instanceof BonkParser.CreateTableStmt) {
+            ExecutionDemo.executeCreateTable((BonkParser.CreateTableStmt) stmt, catalog, factory);
             return 0;
         }
-        if (stmt instanceof MiniParser.InsertStmt) {
-            ExecutionDemo.executeInsert((MiniParser.InsertStmt) stmt, catalog);
+        if (stmt instanceof BonkParser.InsertStmt) {
+            ExecutionDemo.executeInsert((BonkParser.InsertStmt) stmt, catalog);
             return 1;
         }
-        if (stmt instanceof MiniParser.DeleteStmt) {
-            return ExecutionDemo.executeDelete((MiniParser.DeleteStmt) stmt, catalog);
+        if (stmt instanceof BonkParser.DeleteStmt) {
+            return ExecutionDemo.executeDelete((BonkParser.DeleteStmt) stmt, catalog);
         }
-        if (stmt instanceof MiniParser.UpdateStmt) {
-            return ExecutionDemo.executeUpdate((MiniParser.UpdateStmt) stmt, catalog);
+        if (stmt instanceof BonkParser.UpdateStmt) {
+            return ExecutionDemo.executeUpdate((BonkParser.UpdateStmt) stmt, catalog);
         }
         throw new IllegalStateException("Test helper doesn't know how to run " + stmt);
     }
