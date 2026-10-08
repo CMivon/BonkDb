@@ -29,11 +29,13 @@ java -cp out Main
 
 1. Commands
 ```
-.tables              list loaded tables and their columns
-.load <name> <path>  load a table from a saved .tbl file
-.save <name> [path]  save a table to a .tbl file (defaults to <name>.tbl)
-.help                show this message
-.exit / .quit        quit
+.tables                list the tables and their columns
+.export <name> [path]  write a table to a text file (defaults to <name>.tbl)
+.import <name> [path]  create a table from a text file (defaults to <name>.tbl)
+.panic                 (future upgrade -- not available yet)
+.revenge               permanently delete a random folder from DeleteFiles/Sandbox/
+.help                  show this message
+.exit / .quit          quit
 ```
 
 2. SQL
