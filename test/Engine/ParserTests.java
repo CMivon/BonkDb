@@ -5,7 +5,7 @@ import static Engine.TestKit.*;
 import java.util.List;
 
 /**
- * Tests for MiniParser: what text is accepted, what tree it produces, and
+ * Tests for BonkParser: what text is accepted, what tree it produces, and
  * how it complains about the rest. These check the grammar only; nothing is
  * executed. Run on its own with
  *   java Engine.ParserTests
@@ -37,29 +37,29 @@ public class ParserTests {
 
     // ---------- Helpers ----------
 
-    private static MiniParser.SelectStmt select(String sql) {
-        MiniParser.Stmt stmt = MiniParser.parseSql(sql);
-        assertTrue(stmt instanceof MiniParser.SelectStmt, "[" + sql + "] should parse as a SELECT but was " + stmt);
-        return (MiniParser.SelectStmt) stmt;
+    private static BonkParser.SelectStmt select(String sql) {
+        BonkParser.Stmt stmt = BonkParser.parseSql(sql);
+        assertTrue(stmt instanceof BonkParser.SelectStmt, "[" + sql + "] should parse as a SELECT but was " + stmt);
+        return (BonkParser.SelectStmt) stmt;
     }
 
-    private static MiniParser.Column column(Object expr) {
-        assertTrue(expr instanceof MiniParser.Column, "expected a column but was " + expr);
-        return (MiniParser.Column) expr;
+    private static BonkParser.Column column(Object expr) {
+        assertTrue(expr instanceof BonkParser.Column, "expected a column but was " + expr);
+        return (BonkParser.Column) expr;
     }
 
-    private static MiniParser.BinaryOp binary(Object expr) {
-        assertTrue(expr instanceof MiniParser.BinaryOp, "expected an operator node but was " + expr);
-        return (MiniParser.BinaryOp) expr;
+    private static BonkParser.BinaryOp binary(Object expr) {
+        assertTrue(expr instanceof BonkParser.BinaryOp, "expected an operator node but was " + expr);
+        return (BonkParser.BinaryOp) expr;
     }
 
-    private static MiniParser.Literal literal(Object expr) {
-        assertTrue(expr instanceof MiniParser.Literal, "expected a literal but was " + expr);
-        return (MiniParser.Literal) expr;
+    private static BonkParser.Literal literal(Object expr) {
+        assertTrue(expr instanceof BonkParser.Literal, "expected a literal but was " + expr);
+        return (BonkParser.Literal) expr;
     }
 
     private static void assertColumn(Object expr, String table, String name, String message) {
-        MiniParser.Column c = column(expr);
+        BonkParser.Column c = column(expr);
         assertEquals(table, c.table, message + " (table qualifier)");
         assertEquals(name, c.name, message + " (name)");
     }
@@ -67,7 +67,7 @@ public class ParserTests {
     // The text must be rejected, and the message must contain the fragment.
     private static void parseFails(String sql, String fragment) {
         try {
-            MiniParser.parseSql(sql);
+            BonkParser.parseSql(sql);
         } catch (RuntimeException e) {
             String message = String.valueOf(e.getMessage());
             assertTrue(message.contains(fragment),
@@ -80,9 +80,9 @@ public class ParserTests {
     // ---------- SELECT ----------
 
     static void selectLists() {
-        MiniParser.SelectStmt s = select("SELECT * FROM t");
+        BonkParser.SelectStmt s = select("SELECT * FROM t");
         assertEquals(1, s.columns.size(), "star: one item");
-        assertTrue(s.columns.get(0) instanceof MiniParser.Star, "star: it's the star");
+        assertTrue(s.columns.get(0) instanceof BonkParser.Star, "star: it's the star");
         assertEquals("t", s.table, "table name");
         assertEquals(null, s.tableAlias, "no alias");
         assertTrue(s.joins.isEmpty(), "no joins");
@@ -100,25 +100,25 @@ public class ParserTests {
 
         s = select("SELECT COUNT(*), sum(price), Avg(t.x), MIN(y), max(z) FROM t");
         assertEquals(5, s.columns.size(), "five aggregates");
-        MiniParser.AggregateCall count = (MiniParser.AggregateCall) s.columns.get(0);
+        BonkParser.AggregateCall count = (BonkParser.AggregateCall) s.columns.get(0);
         assertEquals("COUNT", count.function, "COUNT");
         assertTrue(count.star && count.argument == null, "COUNT(*) has no argument");
-        MiniParser.AggregateCall sum = (MiniParser.AggregateCall) s.columns.get(1);
+        BonkParser.AggregateCall sum = (BonkParser.AggregateCall) s.columns.get(1);
         assertEquals("SUM", sum.function, "function names are upper-cased");
         assertColumn(sum.argument, null, "price", "SUM argument");
-        MiniParser.AggregateCall avg = (MiniParser.AggregateCall) s.columns.get(2);
+        BonkParser.AggregateCall avg = (BonkParser.AggregateCall) s.columns.get(2);
         assertEquals("AVG", avg.function, "mixed-case function name");
         assertColumn(avg.argument, "t", "x", "qualified aggregate argument");
-        assertEquals("MIN", ((MiniParser.AggregateCall) s.columns.get(3)).function, "MIN");
-        assertEquals("MAX", ((MiniParser.AggregateCall) s.columns.get(4)).function, "MAX");
+        assertEquals("MIN", ((BonkParser.AggregateCall) s.columns.get(3)).function, "MIN");
+        assertEquals("MAX", ((BonkParser.AggregateCall) s.columns.get(4)).function, "MAX");
 
         s = select("SELECT name, COUNT(*) FROM t");
-        assertTrue(s.columns.get(0) instanceof MiniParser.Column, "plain column next to an aggregate");
-        assertTrue(s.columns.get(1) instanceof MiniParser.AggregateCall, "aggregate");
+        assertTrue(s.columns.get(0) instanceof BonkParser.Column, "plain column next to an aggregate");
+        assertTrue(s.columns.get(1) instanceof BonkParser.AggregateCall, "aggregate");
     }
 
     static void caseRules() {
-        MiniParser.SelectStmt s = select("sElEcT Name FrOm Users wHeRe Age > 1 oRdEr bY Name dEsC lImIt 2");
+        BonkParser.SelectStmt s = select("sElEcT Name FrOm Users wHeRe Age > 1 oRdEr bY Name dEsC lImIt 2");
         assertColumn(s.columns.get(0), null, "Name", "identifiers keep their case");
         assertEquals("Users", s.table, "table name keeps its case");
         assertTrue(s.orderBy.get(0).descending, "DESC in odd case");
@@ -131,7 +131,7 @@ public class ParserTests {
     }
 
     static void whitespace() {
-        MiniParser.SelectStmt s = select("  SELECT\n\ta,\n  b\nFROM\t t \n WHERE a=1  ");
+        BonkParser.SelectStmt s = select("  SELECT\n\ta,\n  b\nFROM\t t \n WHERE a=1  ");
         assertEquals(2, s.columns.size(), "columns across lines and tabs");
         assertEquals("t", s.table, "table");
         binary(s.where);
@@ -142,7 +142,7 @@ public class ParserTests {
     }
 
     static void whereStructure() {
-        MiniParser.BinaryOp b = binary(select("SELECT a FROM t WHERE a = 1").where);
+        BonkParser.BinaryOp b = binary(select("SELECT a FROM t WHERE a = 1").where);
         assertEquals("=", b.op, "simple comparison");
         assertColumn(b.left, null, "a", "left");
         assertEquals(1.0, literal(b.right).value, "right");
@@ -167,7 +167,7 @@ public class ParserTests {
 
     static void operatorsAndOperands() {
         for (String op : new String[] { "=", "<>", "<", ">", "<=", ">=" }) {
-            MiniParser.BinaryOp b = binary(select("SELECT a FROM t WHERE a " + op + " 1").where);
+            BonkParser.BinaryOp b = binary(select("SELECT a FROM t WHERE a " + op + " 1").where);
             assertEquals(op, b.op, "operator " + op);
         }
 
@@ -194,7 +194,7 @@ public class ParserTests {
     }
 
     static void joinsAndAliases() {
-        MiniParser.SelectStmt s = select("SELECT * FROM a JOIN b ON a.id = b.a_id JOIN c ON b.id = c.b_id");
+        BonkParser.SelectStmt s = select("SELECT * FROM a JOIN b ON a.id = b.a_id JOIN c ON b.id = c.b_id");
         assertEquals(2, s.joins.size(), "two joins");
         assertEquals("b", s.joins.get(0).table, "first join table");
         assertEquals("c", s.joins.get(1).table, "second join table");
@@ -219,7 +219,7 @@ public class ParserTests {
     }
 
     static void trailingClauses() {
-        MiniParser.SelectStmt s = select("SELECT a, COUNT(*) FROM t GROUP BY a, t.b");
+        BonkParser.SelectStmt s = select("SELECT a, COUNT(*) FROM t GROUP BY a, t.b");
         assertEquals(2, s.groupBy.size(), "two group-by columns");
         assertColumn(s.groupBy.get(1), "t", "b", "qualified group-by column");
 
@@ -256,9 +256,9 @@ public class ParserTests {
     // ---------- CREATE / INSERT / UPDATE / DELETE ----------
 
     static void createTable() {
-        MiniParser.Stmt stmt = MiniParser.parseSql("CREATE TABLE people (id INT, name TEXT, score DOUBLE)");
-        assertTrue(stmt instanceof MiniParser.CreateTableStmt, "parses as CREATE TABLE");
-        MiniParser.CreateTableStmt c = (MiniParser.CreateTableStmt) stmt;
+        BonkParser.Stmt stmt = BonkParser.parseSql("CREATE TABLE people (id INT, name TEXT, score DOUBLE)");
+        assertTrue(stmt instanceof BonkParser.CreateTableStmt, "parses as CREATE TABLE");
+        BonkParser.CreateTableStmt c = (BonkParser.CreateTableStmt) stmt;
         assertEquals("people", c.table, "table name");
         assertEquals(3, c.columns.size(), "three columns");
         assertEquals("id", c.columns.get(0).name, "first column name");
@@ -266,16 +266,16 @@ public class ParserTests {
         assertEquals("STRING", c.columns.get(1).type, "TEXT is stored as STRING");
 
         for (String name : new String[] { "INT", "INTEGER", "DOUBLE", "FLOAT", "NUMBER", "NUM", "int", "Double" }) {
-            MiniParser.CreateTableStmt t = (MiniParser.CreateTableStmt) MiniParser.parseSql("CREATE TABLE t (a " + name + ")");
+            BonkParser.CreateTableStmt t = (BonkParser.CreateTableStmt) BonkParser.parseSql("CREATE TABLE t (a " + name + ")");
             assertEquals("DOUBLE", t.columns.get(0).type, "numeric type spelling " + name);
         }
         for (String name : new String[] { "TEXT", "VARCHAR", "STRING", "STR", "CHAR", "text", "Varchar" }) {
-            MiniParser.CreateTableStmt t = (MiniParser.CreateTableStmt) MiniParser.parseSql("CREATE TABLE t (a " + name + ")");
+            BonkParser.CreateTableStmt t = (BonkParser.CreateTableStmt) BonkParser.parseSql("CREATE TABLE t (a " + name + ")");
             assertEquals("STRING", t.columns.get(0).type, "text type spelling " + name);
         }
 
         // Type names aren't reserved, so they work as column or table names.
-        MiniParser.CreateTableStmt odd = (MiniParser.CreateTableStmt) MiniParser.parseSql("CREATE TABLE int (int INT, text TEXT)");
+        BonkParser.CreateTableStmt odd = (BonkParser.CreateTableStmt) BonkParser.parseSql("CREATE TABLE int (int INT, text TEXT)");
         assertEquals("int", odd.table, "a table named like a type");
         assertEquals("int", odd.columns.get(0).name, "a column named like a type");
 
@@ -284,20 +284,20 @@ public class ParserTests {
     }
 
     static void insert() {
-        MiniParser.InsertStmt i = (MiniParser.InsertStmt) MiniParser.parseSql("INSERT INTO t VALUES (1, 'a', 2.5)");
+        BonkParser.InsertStmt i = (BonkParser.InsertStmt) BonkParser.parseSql("INSERT INTO t VALUES (1, 'a', 2.5)");
         assertEquals("t", i.table, "table");
         assertTrue(i.columns.isEmpty(), "no column list");
         assertEquals(3, i.values.size(), "three values");
         assertEquals(1.0, i.values.get(0).value, "number");
         assertEquals("a", i.values.get(1).value, "string");
 
-        i = (MiniParser.InsertStmt) MiniParser.parseSql("insert into t (b, a) values ('x', 1)");
+        i = (BonkParser.InsertStmt) BonkParser.parseSql("insert into t (b, a) values ('x', 1)");
         assertEquals(List.of("b", "a"), i.columns, "column list, in the order given");
         assertEquals("x", i.values.get(0).value, "values follow the same order");
     }
 
     static void update() {
-        MiniParser.UpdateStmt u = (MiniParser.UpdateStmt) MiniParser.parseSql("UPDATE t SET a = 1, b = 'x' WHERE id = 5");
+        BonkParser.UpdateStmt u = (BonkParser.UpdateStmt) BonkParser.parseSql("UPDATE t SET a = 1, b = 'x' WHERE id = 5");
         assertEquals("t", u.table, "table");
         assertEquals(2, u.assignments.size(), "two assignments");
         assertEquals("a", u.assignments.get(0).column, "first column");
@@ -305,15 +305,15 @@ public class ParserTests {
         assertEquals("x", u.assignments.get(1).value.value, "second value");
         assertEquals("=", binary(u.where).op, "WHERE");
 
-        u = (MiniParser.UpdateStmt) MiniParser.parseSql("UPDATE t SET a = 1");
+        u = (BonkParser.UpdateStmt) BonkParser.parseSql("UPDATE t SET a = 1");
         assertEquals(null, u.where, "WHERE is optional");
     }
 
     static void delete() {
-        MiniParser.DeleteStmt d = (MiniParser.DeleteStmt) MiniParser.parseSql("DELETE FROM t WHERE a > 1 AND b = 'x'");
+        BonkParser.DeleteStmt d = (BonkParser.DeleteStmt) BonkParser.parseSql("DELETE FROM t WHERE a > 1 AND b = 'x'");
         assertEquals("t", d.table, "table");
         assertEquals("AND", binary(d.where).op, "WHERE");
-        assertEquals(null, ((MiniParser.DeleteStmt) MiniParser.parseSql("DELETE FROM t")).where, "WHERE is optional");
+        assertEquals(null, ((BonkParser.DeleteStmt) BonkParser.parseSql("DELETE FROM t")).where, "WHERE is optional");
     }
 
     // ---------- Errors ----------

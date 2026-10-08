@@ -11,7 +11,7 @@ import java.util.regex.*;
  * Teaching skeleton, not production code -- shows the *shape* of a real
  * parser so you can extend it (INSERT, JOIN, etc).
  */
-public class MiniParser {
+public class BonkParser {
 
     // ---------- Stage 1: Lexer ----------
 

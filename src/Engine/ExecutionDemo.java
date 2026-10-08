@@ -3,7 +3,7 @@ package Engine;
 import java.util.*;
 
 /**
- * Minimal execution engine: takes a SelectStmt AST (from MiniParser) and
+ * Minimal execution engine: takes a SelectStmt AST (from BonkParser) and
  * runs it against a Table (see Table.java). Tree-walking style -- no
  * separate query plan yet, the AST is evaluated directly.
  *
@@ -27,21 +27,21 @@ public class ExecutionDemo {
     }
 
     // ---------- Expression evaluator ----------
-    // Walks a MiniParser.Expr against one row and produces a Java value.
+    // Walks a BonkParser.Expr against one row and produces a Java value.
     // Table stays a pure storage/row container; SQL semantics (how to
     // interpret an Expr, how to join two tables) live here instead.
 
-    static Object evaluate(MiniParser.Expr expr, Table table, Object[] row) {
-        if (expr instanceof MiniParser.Literal) {
-            MiniParser.Literal lit = (MiniParser.Literal) expr;
+    static Object evaluate(BonkParser.Expr expr, Table table, Object[] row) {
+        if (expr instanceof BonkParser.Literal) {
+            BonkParser.Literal lit = (BonkParser.Literal) expr;
             return lit.value;
         }
-        if (expr instanceof MiniParser.Column) {
-            MiniParser.Column col = (MiniParser.Column) expr;
+        if (expr instanceof BonkParser.Column) {
+            BonkParser.Column col = (BonkParser.Column) expr;
             return row[table.indexOfColumn(col)];
         }
-        if (expr instanceof MiniParser.BinaryOp) {
-            MiniParser.BinaryOp bin = (MiniParser.BinaryOp) expr;
+        if (expr instanceof BonkParser.BinaryOp) {
+            BonkParser.BinaryOp bin = (BonkParser.BinaryOp) expr;
             // AND / OR short-circuit and expect boolean operands
             if (bin.op.equals("AND")) {
                 return asBool(evaluate(bin.left, table, row)) && asBool(evaluate(bin.right, table, row));
@@ -64,32 +64,32 @@ public class ExecutionDemo {
     // (not per row -- it doesn't depend on row data) via isUnconditionallyTrue,
     // which every WHERE/ON call site below goes through instead of calling
     // evaluate() directly.
-    static boolean isUnconditionallyTrue(MiniParser.Expr condition) {
+    static boolean isUnconditionallyTrue(BonkParser.Expr condition) {
         return condition == null || containsImmaculateVibes(condition);
     }
 
-    static boolean containsImmaculateVibes(MiniParser.Expr expr) {
-        if (!(expr instanceof MiniParser.BinaryOp)) {
+    static boolean containsImmaculateVibes(BonkParser.Expr expr) {
+        if (!(expr instanceof BonkParser.BinaryOp)) {
             return false; // Column/Literal/Star leaves can't contain it
         }
-        MiniParser.BinaryOp bin = (MiniParser.BinaryOp) expr;
+        BonkParser.BinaryOp bin = (BonkParser.BinaryOp) expr;
         if (bin.op.equals("=") && isVibesImmaculate(bin.left, bin.right)) {
             return true;
         }
         return containsImmaculateVibes(bin.left) || containsImmaculateVibes(bin.right);
     }
 
-    static boolean isVibesImmaculate(MiniParser.Expr a, MiniParser.Expr b) {
+    static boolean isVibesImmaculate(BonkParser.Expr a, BonkParser.Expr b) {
         return (isVibesColumn(a) && isImmaculateLiteral(b)) || (isVibesColumn(b) && isImmaculateLiteral(a));
     }
 
-    static boolean isVibesColumn(MiniParser.Expr e) {
-        return e instanceof MiniParser.Column && ((MiniParser.Column) e).name.equalsIgnoreCase("vibes");
+    static boolean isVibesColumn(BonkParser.Expr e) {
+        return e instanceof BonkParser.Column && ((BonkParser.Column) e).name.equalsIgnoreCase("vibes");
     }
 
-    static boolean isImmaculateLiteral(MiniParser.Expr e) {
-        return e instanceof MiniParser.Literal
-            && "immaculate".equalsIgnoreCase(String.valueOf(((MiniParser.Literal) e).value));
+    static boolean isImmaculateLiteral(BonkParser.Expr e) {
+        return e instanceof BonkParser.Literal
+            && "immaculate".equalsIgnoreCase(String.valueOf(((BonkParser.Literal) e).value));
     }
 
     static boolean asBool(Object o) {
@@ -137,7 +137,7 @@ public class ExecutionDemo {
     // two different labels, "a.num" and "b.num" are genuinely distinct
     // column names, instead of both collapsing to "what.num" and silently
     // colliding in the same lookup map.
-    static Table join(Table left, String leftLabel, Table right, String rightLabel, MiniParser.Expr on) {
+    static Table join(Table left, String leftLabel, Table right, String rightLabel, BonkParser.Expr on) {
         List<String> combinedColumns = new ArrayList<>();
         // A null leftLabel means the left side is itself a join result, whose
         // columns are already qualified ("users.id"); prefixing them again would
@@ -175,18 +175,18 @@ public class ExecutionDemo {
     // Creates a new, empty Table from a CREATE TABLE statement and registers
     // it in the catalog. Unlike executeSelect, there's no result set to
     // return -- callers just check for a thrown exception.
-    static void executeCreateTable(MiniParser.CreateTableStmt stmt, Map<String, Table> catalog) {
+    static void executeCreateTable(BonkParser.CreateTableStmt stmt, Map<String, Table> catalog) {
         executeCreateTable(stmt, catalog, (name, columns, types) -> new MemoryTable(name, columns, types));
     }
 
     // The same, but the caller chooses what kind of table gets made.
-    static void executeCreateTable(MiniParser.CreateTableStmt stmt, Map<String, Table> catalog, TableFactory factory) {
+    static void executeCreateTable(BonkParser.CreateTableStmt stmt, Map<String, Table> catalog, TableFactory factory) {
         if (catalog.containsKey(stmt.table)) {
             throw new RuntimeException("Table already exists: " + stmt.table);
         }
         List<String> columnNames = new ArrayList<>();
         List<String> types = new ArrayList<>();
-        for (MiniParser.ColumnDef cd : stmt.columns) {
+        for (BonkParser.ColumnDef cd : stmt.columns) {
             columnNames.add(cd.name);
             types.add(cd.type);
         }
@@ -196,7 +196,7 @@ public class ExecutionDemo {
     // Inserts one row. Delegates the actual insert (and its type validation
     // against a CREATE TABLE'd schema) to Table.insert() -- this method's
     // only job is resolving which VALUES entry goes in which column position.
-    static void executeInsert(MiniParser.InsertStmt stmt, Map<String, Table> catalog) {
+    static void executeInsert(BonkParser.InsertStmt stmt, Map<String, Table> catalog) {
         Table table = catalog.get(stmt.table);
         if (table == null) {
             throw new RuntimeException("No such table: " + stmt.table);
@@ -238,7 +238,7 @@ public class ExecutionDemo {
 
     // Deletes matching rows (or every row, if WHERE is absent) and returns
     // how many were removed, so callers (like the CLI) can report it.
-    static int executeDelete(MiniParser.DeleteStmt stmt, Map<String, Table> catalog) {
+    static int executeDelete(BonkParser.DeleteStmt stmt, Map<String, Table> catalog) {
         Table table = catalog.get(stmt.table);
         if (table == null) {
             throw new RuntimeException("No such table: " + stmt.table);
@@ -253,7 +253,7 @@ public class ExecutionDemo {
     // resolved once up front -- before touching any row -- so an unknown
     // column or a bad-type value fails the whole statement rather than
     // leaving some rows updated and others not.
-    static int executeUpdate(MiniParser.UpdateStmt stmt, Map<String, Table> catalog) {
+    static int executeUpdate(BonkParser.UpdateStmt stmt, Map<String, Table> catalog) {
         Table table = catalog.get(stmt.table);
         if (table == null) {
             throw new RuntimeException("No such table: " + stmt.table);
@@ -261,7 +261,7 @@ public class ExecutionDemo {
 
         List<Integer> indices = new ArrayList<>();
         List<Object> newValues = new ArrayList<>();
-        for (MiniParser.Assignment a : stmt.assignments) {
+        for (BonkParser.Assignment a : stmt.assignments) {
             int idx = table.indexOf(a.column); // throws on unknown column
             Object value = a.value.value;
             if (table.types != null) {
@@ -291,7 +291,7 @@ public class ExecutionDemo {
 
     // ---------- Select executor ----------
 
-    static QueryResult executeSelect(MiniParser.SelectStmt stmt, Map<String, Table> catalog) {
+    static QueryResult executeSelect(BonkParser.SelectStmt stmt, Map<String, Table> catalog) {
         Table base = catalog.get(stmt.table);
         if (base == null) {
             throw new RuntimeException("No such table: " + stmt.table);
@@ -304,7 +304,7 @@ public class ExecutionDemo {
         //    (same table joined to itself) tell its two sides apart.
         Table table = base;
         String leftLabel = stmt.tableAlias != null ? stmt.tableAlias : stmt.table;
-        for (MiniParser.Join join : stmt.joins) {
+        for (BonkParser.Join join : stmt.joins) {
             Table right = catalog.get(join.table);
             if (right == null) {
                 throw new RuntimeException("No such table: " + join.table);
@@ -340,8 +340,8 @@ public class ExecutionDemo {
         //    execution (many rows collapse into one per group), so they get
         //    their own path rather than being squeezed into the per-row one.
         boolean hasAggregates = false;
-        for (MiniParser.Expr e : stmt.columns) {
-            if (e instanceof MiniParser.AggregateCall) { hasAggregates = true; break; }
+        for (BonkParser.Expr e : stmt.columns) {
+            if (e instanceof BonkParser.AggregateCall) { hasAggregates = true; break; }
         }
         if (hasAggregates || !stmt.groupBy.isEmpty()) {
             return executeAggregateSelect(stmt, table, filtered);
@@ -350,14 +350,14 @@ public class ExecutionDemo {
         // ---------- Plain (non-aggregate) path ----------
 
         // 4. Resolve which columns to project (handle SELECT *)
-        List<MiniParser.Column> outputColumns;
-        if (stmt.columns.size() == 1 && stmt.columns.get(0) instanceof MiniParser.Star) {
+        List<BonkParser.Column> outputColumns;
+        if (stmt.columns.size() == 1 && stmt.columns.get(0) instanceof BonkParser.Star) {
             outputColumns = new ArrayList<>();
-            for (String c : table.columns) outputColumns.add(new MiniParser.Column(c));
+            for (String c : table.columns) outputColumns.add(new BonkParser.Column(c));
         } else {
             outputColumns = new ArrayList<>();
-            for (MiniParser.Expr e : stmt.columns) {
-                outputColumns.add((MiniParser.Column) e);
+            for (BonkParser.Expr e : stmt.columns) {
+                outputColumns.add((BonkParser.Column) e);
             }
         }
 
@@ -375,7 +375,7 @@ public class ExecutionDemo {
         } else if (!stmt.orderBy.isEmpty()) {
             final Table sortTable = table; // lambdas need an effectively-final capture
             Comparator<Object[]> comparator = (a, b) -> {
-                for (MiniParser.OrderByItem item : stmt.orderBy) {
+                for (BonkParser.OrderByItem item : stmt.orderBy) {
                     int idx = sortTable.indexOfColumn(item.column);
                     int cmp = compareValues(a[idx], b[idx]);
                     if (item.descending) cmp = -cmp;
@@ -402,7 +402,7 @@ public class ExecutionDemo {
         }
 
         List<String> columnNames = new ArrayList<>();
-        for (MiniParser.Column c : outputColumns) columnNames.add(c.display());
+        for (BonkParser.Column c : outputColumns) columnNames.add(c.display());
         return new QueryResult(columnNames, result);
     }
 
@@ -412,9 +412,9 @@ public class ExecutionDemo {
     // "SELECT COUNT(*) FROM t WHERE ..." always returns exactly one row),
     // then computes one aggregate value per group per aggregate in the
     // SELECT list.
-    static QueryResult executeAggregateSelect(MiniParser.SelectStmt stmt, Table table, List<Object[]> filtered) {
-        for (MiniParser.Expr e : stmt.columns) {
-            if (e instanceof MiniParser.Star) {
+    static QueryResult executeAggregateSelect(BonkParser.SelectStmt stmt, Table table, List<Object[]> filtered) {
+        for (BonkParser.Expr e : stmt.columns) {
+            if (e instanceof BonkParser.Star) {
                 throw new RuntimeException("SELECT * is not supported with GROUP BY / aggregates");
             }
         }
@@ -434,7 +434,7 @@ public class ExecutionDemo {
         } else {
             for (Object[] row : filtered) {
                 List<Object> key = new ArrayList<>();
-                for (MiniParser.Column gc : stmt.groupBy) {
+                for (BonkParser.Column gc : stmt.groupBy) {
                     key.add(row[table.indexOfColumn(gc)]);
                 }
                 groups.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
@@ -448,11 +448,11 @@ public class ExecutionDemo {
 
             Object[] outRow = new Object[stmt.columns.size()];
             for (int i = 0; i < stmt.columns.size(); i++) {
-                MiniParser.Expr e = stmt.columns.get(i);
-                if (e instanceof MiniParser.AggregateCall) {
-                    outRow[i] = computeAggregate((MiniParser.AggregateCall) e, table, groupRows);
-                } else if (e instanceof MiniParser.Column) {
-                    MiniParser.Column c = (MiniParser.Column) e;
+                BonkParser.Expr e = stmt.columns.get(i);
+                if (e instanceof BonkParser.AggregateCall) {
+                    outRow[i] = computeAggregate((BonkParser.AggregateCall) e, table, groupRows);
+                } else if (e instanceof BonkParser.Column) {
+                    BonkParser.Column c = (BonkParser.Column) e;
                     int idx = groupByIndexOf(stmt.groupBy, c);
                     if (idx == -1) {
                         throw new RuntimeException(
@@ -475,11 +475,11 @@ public class ExecutionDemo {
         }
 
         List<String> columnNames = new ArrayList<>();
-        for (MiniParser.Expr e : stmt.columns) {
-            if (e instanceof MiniParser.AggregateCall) {
+        for (BonkParser.Expr e : stmt.columns) {
+            if (e instanceof BonkParser.AggregateCall) {
                 columnNames.add(e.toString()); // e.g. "COUNT(*)", "SUM(price)" -- already clean
             } else {
-                columnNames.add(((MiniParser.Column) e).display());
+                columnNames.add(((BonkParser.Column) e).display());
             }
         }
         return new QueryResult(columnNames, result);
@@ -487,9 +487,9 @@ public class ExecutionDemo {
 
     // Column doesn't override equals(), so matching a SELECT-list column
     // against the GROUP BY list is done by comparing table+name manually.
-    static int groupByIndexOf(List<MiniParser.Column> groupBy, MiniParser.Column target) {
+    static int groupByIndexOf(List<BonkParser.Column> groupBy, BonkParser.Column target) {
         for (int i = 0; i < groupBy.size(); i++) {
-            MiniParser.Column gc = groupBy.get(i);
+            BonkParser.Column gc = groupBy.get(i);
             if (Objects.equals(gc.table, target.table) && gc.name.equals(target.name)) {
                 return i;
             }
@@ -497,7 +497,7 @@ public class ExecutionDemo {
         return -1;
     }
 
-    static Object computeAggregate(MiniParser.AggregateCall agg, Table table, List<Object[]> rows) {
+    static Object computeAggregate(BonkParser.AggregateCall agg, Table table, List<Object[]> rows) {
         if (agg.function.equals("COUNT")) {
             if (agg.star) return (double) rows.size();
             int idx = table.indexOfColumn(agg.argument);
