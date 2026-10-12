@@ -52,6 +52,8 @@ java -cp out Storage.RunStorageTests
 ```
 Please note: The tests do not rely on any third party suite. This will likely change in future versions
 
+There are a few failing tests. This is known and I am working on it.
+
 ## Future Improvements
 BonkDb is still a Work in Progress. More bonks are yet to come!
 
